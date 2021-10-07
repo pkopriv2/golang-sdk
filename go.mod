@@ -32,8 +32,9 @@ require (
 	github.com/stripe/stripe-go v70.15.0+incompatible
 	github.com/urfave/cli v1.20.0
 	github.com/zbiljic/go-filelock v0.0.0-20170914061330-1dbf7103ab7d
-	golang.org/x/crypto v0.0.0-20200604202706-70a84ac30bf9
-	golang.org/x/sys v0.0.0-20200918174421-af09f7315aff
+	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
+	golang.org/x/sys v0.0.0-20210908233432-aa78b53d3365
+	google.golang.org/api v0.57.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/mailgun/mailgun-go.v1 v1.1.1
 	gopkg.in/yaml.v2 v2.3.0
