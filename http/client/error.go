@@ -1,7 +1,7 @@
 package client
 
 import (
-	"github.com/pkopriv2/golang-sdk/lang/http/content"
+	"github.com/pkopriv2/golang-sdk/http/content"
 	"github.com/pkg/errors"
 )
 

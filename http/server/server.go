@@ -3,11 +3,11 @@ package server
 import (
 	"net/http"
 
+	"github.com/gorilla/mux"
+	"github.com/pkopriv2/golang-sdk/http/client"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/env"
-	"github.com/pkopriv2/golang-sdk/lang/http/client"
 	"github.com/pkopriv2/golang-sdk/lang/net"
-	"github.com/gorilla/mux"
 )
 
 func defaultListener() (net.Listener, error) {

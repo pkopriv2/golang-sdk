@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/pkopriv2/golang-sdk/lang/errs"
-	"github.com/pkopriv2/golang-sdk/lang/http/headers"
+	"github.com/pkopriv2/golang-sdk/http/headers"
 )
 
 var tlsMatch = regexp.MustCompile(":443$")

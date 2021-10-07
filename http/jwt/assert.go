@@ -6,9 +6,9 @@ import (
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/http/headers"
 	"github.com/pkopriv2/golang-sdk/lang/crypto"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
-	"github.com/pkopriv2/golang-sdk/lang/http/headers"
 )
 
 type Verifier func(claim interface{}) error

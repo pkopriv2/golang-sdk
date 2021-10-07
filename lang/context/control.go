@@ -6,6 +6,17 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/concurrent"
 )
 
+func IsClosed(c <-chan struct{}) (ok bool) {
+	select {
+	default:
+	case <-c:
+		return true
+	}
+	return
+}
+
+type Lifecycle Control
+
 type Control interface {
 	io.Closer
 	Fail(error)

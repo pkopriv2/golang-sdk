@@ -3,8 +3,8 @@ package client
 import (
 	"io"
 
-	"github.com/pkopriv2/golang-sdk/lang/http/content"
-	"github.com/pkopriv2/golang-sdk/lang/http/headers"
+	"github.com/pkopriv2/golang-sdk/http/content"
+	"github.com/pkopriv2/golang-sdk/http/headers"
 )
 
 type Decoder = headers.Decoder

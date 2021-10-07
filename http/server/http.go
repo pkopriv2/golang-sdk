@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/pkopriv2/golang-sdk/lang/errs"
-	"github.com/pkopriv2/golang-sdk/lang/http/headers"
 	"github.com/gorilla/mux"
+	"github.com/pkopriv2/golang-sdk/http/headers"
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 )
 
 type request struct {

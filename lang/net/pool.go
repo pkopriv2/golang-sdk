@@ -3,12 +3,35 @@ package net
 import (
 	"container/list"
 	"io"
+	"net"
+	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 )
 
 type Dialer func(time.Duration) (Connection, error)
+
+func NewStandardDialer(addr string) Dialer {
+	return func(d time.Duration) (ret Connection, err error) {
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			err = errors.Wrapf(err, "Bad addr [%v]", addr)
+			return
+		}
+
+		if strings.HasSuffix(port, "43") {
+			ret, err = NewTLSNetwork().Dial(d, addr)
+		} else {
+			ret, err = NewTCP4Network().Dial(d, addr)
+		}
+		if err != nil {
+			err = errors.Wrapf(err, "Unable to connect [%v]", addr)
+		}
+		return
+	}
+}
 
 type ConnectionPool interface {
 	io.Closer

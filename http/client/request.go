@@ -6,7 +6,7 @@ import (
 	"reflect"
 
 	"github.com/pkopriv2/golang-sdk/lang/enc"
-	"github.com/pkopriv2/golang-sdk/lang/http/headers"
+	"github.com/pkopriv2/golang-sdk/http/headers"
 )
 
 func Get(path string, args ...interface{}) Request {

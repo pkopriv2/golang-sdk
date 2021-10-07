@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/pkopriv2/golang-sdk/lang/errs"
-	"github.com/pkopriv2/golang-sdk/libs/auth"
 	"github.com/urfave/cli"
 )
 
@@ -14,11 +13,7 @@ import (
 // Runs a tool in the given environment and with the provided args.
 func Run(e Environment, t Tool, args []string) (err error) {
 	if err = t(e).Run(args); err != nil {
-		if errs.Is(err, auth.ErrUnauthorized) {
-			DisplayUnauthorized(e)
-		} else {
-			DisplayFailure(e, err)
-		}
+		DisplayFailure(e, err)
 	}
 	return
 }

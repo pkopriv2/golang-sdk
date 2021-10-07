@@ -59,3 +59,5 @@ func (a adapted) Close() error {
 func (a adapted) Addr() net.Addr {
 	return a.l.Address()
 }
+
+var SplitHostPort = net.SplitHostPort

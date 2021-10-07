@@ -25,6 +25,10 @@ func DialTCP4(timeout time.Duration, addr string) (Connection, error) {
 
 type TCP4Network struct{}
 
+func NewTCP4Network() *TCP4Network {
+	return &TCP4Network{}
+}
+
 func (t *TCP4Network) Dial(timeout time.Duration, addr string) (Connection, error) {
 	return DialTCP4(timeout, addr)
 }

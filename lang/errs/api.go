@@ -13,6 +13,7 @@ var (
 	StateError    = fmt.Errorf("Errs:StateError")
 	ClosedError   = fmt.Errorf("Errs:ClosedError")
 	CanceledError = errors.New("Errs:CanceledError")
+	TimeoutError  = errors.New("Errs:TimeoutError")
 )
 
 func Or(all ...error) error {

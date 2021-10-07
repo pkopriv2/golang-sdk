@@ -3,11 +3,11 @@ package content
 import (
 	"io"
 
+	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/http/headers"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
-	"github.com/pkopriv2/golang-sdk/lang/http/headers"
 	"github.com/pkopriv2/golang-sdk/lang/mime"
-	"github.com/pkg/errors"
 )
 
 var (

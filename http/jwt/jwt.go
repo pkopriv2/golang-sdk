@@ -3,9 +3,9 @@ package jwt
 import (
 	"strings"
 
-	"github.com/pkopriv2/golang-sdk/lang/crypto"
-	"github.com/pkopriv2/golang-sdk/lang/http/headers"
 	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/pkopriv2/golang-sdk/http/headers"
+	"github.com/pkopriv2/golang-sdk/lang/crypto"
 )
 
 // Simple alias.

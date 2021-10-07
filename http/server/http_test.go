@@ -7,7 +7,7 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/env"
-	"github.com/pkopriv2/golang-sdk/lang/http/client"
+	"github.com/pkopriv2/golang-sdk/http/client"
 	"github.com/stretchr/testify/assert"
 )
 
