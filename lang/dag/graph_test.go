@@ -155,7 +155,7 @@ func TestIsTopoSort_MultipleOrderings(t *testing.T) {
 	assert.False(t, g.IsTopologicalSort([]Vertex{Vertex{Id: "c"}, Vertex{Id: "b"}, Vertex{Id: "a"}}))
 }
 
-func TestWalk(t *testing.T) {
+func TestTraverse(t *testing.T) {
 	g, err := NewBuilder().
 		AddVertex("a", nil).
 		AddVertex("b", nil).
@@ -189,7 +189,7 @@ func TestWalk(t *testing.T) {
 	assert.True(t, g.IsTopologicalSort(order))
 }
 
-func TestWalk_SingleChain(t *testing.T) {
+func TestTraverse_SingleChain(t *testing.T) {
 	builder := NewBuilder()
 
 	for i := 0; i < 100; i++ {
@@ -216,4 +216,26 @@ func TestWalk_SingleChain(t *testing.T) {
 		return
 	}
 	assert.True(t, g.IsTopologicalSort(order))
+}
+
+func TestDownstream(t *testing.T) {
+	graph1 := NewBuilder().
+		AddVertex("a", nil).
+		AddVertex("b", nil).
+		AddVertex("c", nil).
+		AddVertex("d", nil).
+		AddEdge("a", "b").
+		AddEdge("a", "c").
+		AddEdge("b", "d").
+		MustBuild()
+
+	assert.True(t, graph1.Equals(graph1.DownstreamGraph("a", true)))
+
+	graph2 := NewBuilder().
+		AddVertex("b", nil).
+		AddVertex("d", nil).
+		AddEdge("b", "d").
+		MustBuild()
+
+	assert.True(t, graph2.Equals(graph1.DownstreamGraph("b", true)))
 }

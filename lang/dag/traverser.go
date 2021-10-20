@@ -254,8 +254,8 @@ func (t *Traverser) Start() {
 		Outer:
 			// Evaluate all downstream neighbors. Add any whose dependencies
 			// have all been visited to the pending list.
-			for _, v := range t.graph.DownstreamNeighbors(result.Vertex) {
-				for _, u := range t.graph.UpstreamNeighbors(v) {
+			for _, v := range t.graph.DownstreamNeighbors(result.Vertex.Id) {
+				for _, u := range t.graph.UpstreamNeighbors(v.Id) {
 					if result, ok := s.results[u.Id]; !ok || result.Error != nil {
 						continue Outer
 					}

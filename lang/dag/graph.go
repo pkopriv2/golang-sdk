@@ -2,7 +2,14 @@ package dag
 
 import (
 	"fmt"
+
+	"github.com/pkopriv2/golang-sdk/lang/concurrent"
 )
+
+// Simple rename.  Typical entry-point
+func NewGraph() *Builder {
+	return NewBuilder()
+}
 
 // A cycle error contains all the vertices that were discovered
 // to be involved in a cycle within a directed graph.
@@ -45,10 +52,75 @@ func (v Vertex) String() string {
 	return fmt.Sprintf("Vertex(%v)", v.Id)
 }
 
+// A simple set-like collection of edges.
+type Edges []Edge
+
+func (e Edges) Contains(src, dst string) bool {
+	for _, cur := range e {
+		if src == cur.Src && dst == cur.Dst {
+			return true
+		}
+	}
+	return false
+}
+
+func (e Edges) Equals(o Edges) bool {
+	if len(e) != len(o) {
+		return false
+	}
+
+	for _, cur := range o {
+		if !e.Contains(cur.Src, cur.Dst) {
+			return false
+		}
+	}
+	return true
+}
+
+func (e Edges) Add(src, dst string) Edges {
+	if e.Contains(src, dst) {
+		return e
+	}
+	return append(e, Edge{src, dst})
+}
+
+// A simple set-like collection of vertices
+type Vertices []Vertex
+
+func (v Vertices) Contains(id string) bool {
+	for _, cur := range v {
+		if id == cur.Id {
+			return true
+		}
+	}
+	return false
+}
+
+func (v Vertices) Equals(o Vertices) bool {
+	if len(v) != len(o) {
+		return false
+	}
+	for _, cur := range o {
+		if !v.Contains(cur.Id) {
+			return false
+		}
+	}
+	return true
+}
+
+func (v Vertices) Add(id string, data interface{}) (ret Vertices) {
+	for _, cur := range v {
+		if cur.Id != id {
+			ret = append(ret, cur)
+		}
+	}
+	return append(ret, Vertex{id, data})
+}
+
 // A builder is responsible for safely building new graph instances.
 type Builder struct {
-	edges    []Edge
-	vertices []Vertex
+	edges    Edges
+	vertices Vertices
 }
 
 // Returns a new graph builder.
@@ -59,13 +131,13 @@ func NewBuilder() *Builder {
 // Adds a vertex to the builder, returning a new builder.  The
 // original builder is NOT mutated and is safe to reuse.
 func (b *Builder) AddVertex(id string, data interface{}) (ret *Builder) {
-	return &Builder{b.edges, append(b.vertices, Vertex{id, data})}
+	return &Builder{b.edges, b.vertices.Add(id, data)}
 }
 
 // Adds an edge to the builder, returning a new builder.  The
 // original builder is NOT mutated and is safe to reuse.
 func (b *Builder) AddEdge(src, dst string) *Builder {
-	return &Builder{append(b.edges, Edge{src, dst}), b.vertices}
+	return &Builder{b.edges.Add(src, dst), b.vertices}
 }
 
 // Builds the resulting graph.  Ensures that the graph is both
@@ -98,9 +170,6 @@ func (b *Builder) MustBuild() (ret *Graph) {
 }
 
 // A graph is an implementation of of a directed acyclic graph
-// This particular graph implementation allows for partial or
-// incomplete states (ie edges without corresponding vertices)
-// during construction.
 type Graph struct {
 	vertices   map[string]Vertex
 	edgesBySrc map[string][]Edge // indexed by src vertex
@@ -112,35 +181,87 @@ func (g *Graph) IsEmpty() bool {
 	return len(g.vertices) == 0
 }
 
+// Returns whether the graph is empty
+func (g *Graph) ContainsVertex(id string) (ok bool) {
+	_, ok = g.vertices[id]
+	return
+}
+
 // Returns the complete set of vertices in the graph
-func (g *Graph) Vertices() []Vertex {
+func (g *Graph) Vertices() Vertices {
 	return flattenVertices(g.vertices)
 }
 
 // Returns the complete set of edges in the graph
-func (g *Graph) Edges() []Edge {
+func (g *Graph) Edges() Edges {
 	return flattenEdges(g.edgesBySrc)
+}
+
+// Returns whether the input graph is equal to this graph
+func (g *Graph) Equals(o *Graph) (ok bool) {
+	if o == nil {
+		return false
+	}
+
+	return g.Edges().Equals(o.Edges()) && g.Vertices().Equals(o.Vertices())
 }
 
 // Returns a new builder whose set of edges and vertices are
 // equal to this graph.
-func (g *Graph) Update() Builder {
-	return Builder{flattenEdges(g.edgesBySrc), flattenVertices(g.vertices)}
+func (g *Graph) Update() *Builder {
+	return &Builder{flattenEdges(g.edgesBySrc), flattenVertices(g.vertices)}
 }
 
-// Returns all the upstream vertices immediately adjacent to v
-func (g *Graph) UpstreamNeighbors(v Vertex) (ret []Vertex) {
-	for _, e := range g.edgesByDst[v.Id] {
+// Returns all the upstream vertices immediately adjacent to v.  Returns nil if the vertex is not a member
+func (g *Graph) UpstreamNeighbors(id string) (ret []Vertex) {
+	for _, e := range g.edgesByDst[id] {
 		ret = append(ret, g.vertices[e.Src])
 	}
 	return
 }
 
-// Returns all the upstream vertices immediately adjacent to v
-func (g *Graph) DownstreamNeighbors(v Vertex) (ret []Vertex) {
-	for _, e := range g.edgesBySrc[v.Id] {
+// Returns all the upstream vertices immediately adjacent to v.  Returns nil if the vertex is not a member
+func (g *Graph) DownstreamNeighbors(id string) (ret []Vertex) {
+	for _, e := range g.edgesBySrc[id] {
 		ret = append(ret, g.vertices[e.Dst])
 	}
+	return
+}
+
+// Returns a graph that is reachable from the input vertex.  Returns nil if the vertex is not a member
+func (g *Graph) DownstreamGraph(id string, inclusive bool) (ret *Graph) {
+	if !g.ContainsVertex(id) {
+		return nil
+	}
+
+	builder := NewBuilder()
+
+	stack := concurrent.NewArrayStack() // only convenient stack implementation.  replace later. (Not even sure if a stack is necessary)
+	stack.Push(g.vertices[id])
+
+	var cur interface{} // will type it later
+	for {
+		cur = stack.Pop()
+		if cur == nil {
+			break
+		}
+
+		curVertex := cur.(Vertex)
+		if curVertex.Id != id || inclusive {
+			builder = builder.AddVertex(curVertex.Id, curVertex.Data)
+		}
+
+		for _, e := range g.edgesBySrc[curVertex.Id] {
+			if curVertex.Id != id || inclusive {
+				builder = builder.AddEdge(e.Src, e.Dst)
+			}
+
+			// not possible for there not to be a target vertex
+			stack.Push(g.vertices[e.Dst])
+		}
+	}
+
+	ret, _ = builder.Build()
 	return
 }
 
