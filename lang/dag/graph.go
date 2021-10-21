@@ -200,7 +200,7 @@ func (g *Graph) Edges() Edges {
 // Returns whether the input graph is equal to this graph
 func (g *Graph) Equals(o *Graph) (ok bool) {
 	if o == nil {
-		return false
+		return g == nil
 	}
 
 	return g.Edges().Equals(o.Edges()) && g.Vertices().Equals(o.Vertices())
@@ -329,9 +329,11 @@ func (g *Graph) Traverse(fn TraverseFunc, o ...func(*TraverseOptions)) (err erro
 	return
 }
 
-func flattenEdges(in map[string][]Edge) (out []Edge) {
+func flattenEdges(in map[string][]Edge) (out Edges) {
 	for _, set := range in {
-		out = append(out, set...)
+		for _, e := range set {
+			out = out.Add(e.Src, e.Dst)
+		}
 	}
 	return
 }
