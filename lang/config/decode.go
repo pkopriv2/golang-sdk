@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pkopriv2/golang-sdk/lang/crypto"
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/crypto"
 	uuid "github.com/satori/go.uuid"
 )
 

@@ -235,7 +235,7 @@ func (g *Graph) Update() *Builder {
 }
 
 // Returns a new graph that is the result of unioning the two graph's respective edges and vertices
-func (g *Graph) Merge(o Graph) (ret *Graph) {
+func (g *Graph) Merge(o Graph) (ret *Graph, err error) {
 	builder := g.Update()
 	for _, e := range o.Edges() {
 		builder = builder.AddEdge(e.Src, e.Dst)
@@ -243,7 +243,18 @@ func (g *Graph) Merge(o Graph) (ret *Graph) {
 	for _, v := range o.Vertices() {
 		builder = builder.AddVertex(v.Id, v.Data)
 	}
-	return builder.MustBuild()
+	return builder.Build()
+}
+
+// Prunes the vertex from the graph.  All its incoming and outgoing edges will be removed.
+func (g *Graph) Prune(id string) (ret *Graph) {
+	builder := g.Update()
+	for _, e := range append(g.edgesBySrc[id], g.edgesByDst[id]...) {
+		builder = builder.DelEdge(e.Src, e.Dst)
+	}
+
+	builder = builder.DelVertex(id)
+	return builder.MustBuild() // must be a valid graph
 }
 
 // Returns all the upstream vertices immediately adjacent to v.  Returns nil if the vertex is not a member
@@ -260,17 +271,6 @@ func (g *Graph) DownstreamNeighbors(id string) (ret []Vertex) {
 		ret = append(ret, g.vertices[e.Dst])
 	}
 	return
-}
-
-// Prunes the vertex from the graph.  All its incoming and outgoing edges will be removed.
-func (g *Graph) Prune(id string) (ret *Graph) {
-	builder := g.Update()
-	for _, e := range append(g.edgesBySrc[id], g.edgesByDst[id]...) {
-		builder = builder.DelEdge(e.Src, e.Dst)
-	}
-
-	builder = builder.DelVertex(id)
-	return builder.MustBuild() // must be a valid graph
 }
 
 // Returns a graph that is reachable from the input vertex.  Returns nil if the vertex is not a member

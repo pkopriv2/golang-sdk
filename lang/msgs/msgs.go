@@ -1,9 +1,9 @@
 package msgs
 
 import (
+	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/mail"
 	"github.com/pkopriv2/golang-sdk/lang/sms"
-	"github.com/pkg/errors"
 )
 
 var ErrMissingField = errors.New("Msgs:MissingField")

@@ -28,6 +28,9 @@ func WriteConfig(c Config, file string, mode os.FileMode) (err error) {
 		e = enc.Json
 	case strings.HasSuffix(file, ".toml"):
 		e = enc.Toml
+	default:
+		err = errors.Errorf("Unsupported file [%v].  Must end in .yaml, .json, .toml", file)
+		return
 	}
 
 	file, err = path.Expand(file)
@@ -66,6 +69,9 @@ func ParseFromFile(file string) (ret Config, err error) {
 		dec = enc.Json
 	case strings.HasSuffix(file, ".toml"):
 		dec = enc.Toml
+	default:
+		err = errors.Errorf("Unsupported file [%v].  Must end in .yaml, .json, .toml", file)
+		return
 	}
 
 	file, err = path.Expand(file)

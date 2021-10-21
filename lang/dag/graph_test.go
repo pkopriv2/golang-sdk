@@ -239,3 +239,11 @@ func TestDownstream(t *testing.T) {
 
 	assert.True(t, graph2.Equals(graph1.DownstreamGraph("b", true)))
 }
+
+func TestPrune(t *testing.T) {
+	graph1 := NewBuilder().
+		AddVertex("b", nil).
+		MustBuild()
+
+	assert.True(t, graph1.Prune("b").IsEmpty())
+}

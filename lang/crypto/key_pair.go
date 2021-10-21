@@ -3,8 +3,8 @@ package crypto
 import (
 	"io"
 
-	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/enc"
 )
 
 const (
