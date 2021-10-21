@@ -209,12 +209,6 @@ func (g *Graph) IsEmpty() bool {
 	return len(g.vertices) == 0
 }
 
-// Returns whether the graph is empty
-func (g *Graph) ContainsVertex(id string) (ok bool) {
-	_, ok = g.vertices[id]
-	return
-}
-
 // Returns the complete set of vertices in the graph
 func (g *Graph) Vertices() Vertices {
 	return flattenVertices(g.vertices)
@@ -238,6 +232,18 @@ func (g *Graph) Equals(o *Graph) (ok bool) {
 // equal to this graph.
 func (g *Graph) Update() *Builder {
 	return &Builder{flattenEdges(g.edgesBySrc), flattenVertices(g.vertices)}
+}
+
+// Returns a new graph that is the result of unioning the two graph's respective edges and vertices
+func (g *Graph) Merge(o Graph) (ret *Graph) {
+	builder := g.Update()
+	for _, e := range o.Edges() {
+		builder = builder.AddEdge(e.Src, e.Dst)
+	}
+	for _, v := range o.Vertices() {
+		builder = builder.AddVertex(v.Id, v.Data)
+	}
+	return builder.MustBuild()
 }
 
 // Returns all the upstream vertices immediately adjacent to v.  Returns nil if the vertex is not a member
@@ -269,7 +275,7 @@ func (g *Graph) Prune(id string) (ret *Graph) {
 
 // Returns a graph that is reachable from the input vertex.  Returns nil if the vertex is not a member
 func (g *Graph) DownstreamGraph(id string, inclusive bool) (ret *Graph) {
-	if !g.ContainsVertex(id) {
+	if _, ok := g.vertices[id]; !ok {
 		return nil
 	}
 
