@@ -3,7 +3,7 @@ package dag
 import (
 	"fmt"
 
-	"github.com/pkopriv2/golang-sdk/lang/concurrent"
+	"github.com/emirpasic/gods/stacks/arraystack"
 )
 
 // Simple rename.  Typical entry-point
@@ -84,6 +84,15 @@ func (e Edges) Add(src, dst string) Edges {
 	return append(e, Edge{src, dst})
 }
 
+func (e Edges) Del(src, dst string) (ret Edges) {
+	for _, cur := range e {
+		if src != cur.Src || dst != cur.Dst {
+			ret = append(ret, cur)
+		}
+	}
+	return
+}
+
 // A simple set-like collection of vertices
 type Vertices []Vertex
 
@@ -117,6 +126,15 @@ func (v Vertices) Add(id string, data interface{}) (ret Vertices) {
 	return append(ret, Vertex{id, data})
 }
 
+func (v Vertices) Del(id string) (ret Vertices) {
+	for _, cur := range v {
+		if cur.Id != id {
+			ret = append(ret, cur)
+		}
+	}
+	return
+}
+
 // A builder is responsible for safely building new graph instances.
 type Builder struct {
 	edges    Edges
@@ -134,10 +152,20 @@ func (b *Builder) AddVertex(id string, data interface{}) (ret *Builder) {
 	return &Builder{b.edges, b.vertices.Add(id, data)}
 }
 
+// Removes a vertex from the builder, returning a new builder.
+func (b *Builder) DelVertex(id string) (ret *Builder) {
+	return &Builder{b.edges, b.vertices.Del(id)}
+}
+
 // Adds an edge to the builder, returning a new builder.  The
 // original builder is NOT mutated and is safe to reuse.
 func (b *Builder) AddEdge(src, dst string) *Builder {
 	return &Builder{b.edges.Add(src, dst), b.vertices}
+}
+
+// Removes an edge from the builder, returning a new builder.
+func (b *Builder) DelEdge(src, dst string) (ret *Builder) {
+	return &Builder{b.edges.Del(src, dst), b.vertices}
 }
 
 // Builds the resulting graph.  Ensures that the graph is both
@@ -228,6 +256,17 @@ func (g *Graph) DownstreamNeighbors(id string) (ret []Vertex) {
 	return
 }
 
+// Prunes the vertex from the graph.  All its incoming and outgoing edges will be removed.
+func (g *Graph) Prune(id string) (ret *Graph) {
+	builder := g.Update()
+	for _, e := range append(g.edgesBySrc[id], g.edgesByDst[id]...) {
+		builder = builder.DelEdge(e.Src, e.Dst)
+	}
+
+	builder = builder.DelVertex(id)
+	return builder.MustBuild() // must be a valid graph
+}
+
 // Returns a graph that is reachable from the input vertex.  Returns nil if the vertex is not a member
 func (g *Graph) DownstreamGraph(id string, inclusive bool) (ret *Graph) {
 	if !g.ContainsVertex(id) {
@@ -235,14 +274,12 @@ func (g *Graph) DownstreamGraph(id string, inclusive bool) (ret *Graph) {
 	}
 
 	builder := NewBuilder()
-
-	stack := concurrent.NewArrayStack() // only convenient stack implementation.  replace later. (Not even sure if a stack is necessary)
+	stack := arraystack.New()
 	stack.Push(g.vertices[id])
 
-	var cur interface{} // will type it later
 	for {
-		cur = stack.Pop()
-		if cur == nil {
+		cur, ok := stack.Pop()
+		if !ok {
 			break
 		}
 
