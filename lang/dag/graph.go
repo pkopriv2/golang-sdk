@@ -296,12 +296,10 @@ func (g *Graph) IsTopologicalSort(in []Vertex) (ok bool) {
 		return -1
 	}
 
-	for _, edges := range g.edgesBySrc {
-		for _, e := range edges {
-			srcIdx, dstIdx := findIndex(e.Src), findIndex(e.Dst)
-			if srcIdx == -1 || dstIdx == -1 || srcIdx >= dstIdx {
-				return
-			}
+	for _, e := range g.Edges() {
+		srcIdx, dstIdx := findIndex(e.Src), findIndex(e.Dst)
+		if srcIdx == -1 || dstIdx == -1 || srcIdx >= dstIdx {
+			return
 		}
 	}
 
