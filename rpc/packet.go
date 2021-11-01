@@ -53,7 +53,7 @@ func newPacket(data []byte) (ret packet) {
 }
 
 // Reads a packet from the reader.
-func readPacketRaw(r io.Reader, p *packet) (err error) {
+func readPacketRaw(r io.Reader) (p packet, err error) {
 	if err = readHeaderRaw(r, &p.Header); err != nil {
 		err = errors.Wrapf(err, "Error reading packet header")
 		return

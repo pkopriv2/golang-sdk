@@ -3,9 +3,7 @@ package rpc
 import (
 	"time"
 
-	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 )
 
@@ -71,7 +69,7 @@ func buildOptions(fns []Option) (ret Options) {
 		DefaultReadTimeout,
 		DefaultSendTimeout,
 		DefaultListener,
-		enc.Gob,
+		enc.Json,
 		DefaultWorkers,
 	}
 	for _, fn := range fns {
@@ -86,129 +84,35 @@ type request struct {
 }
 
 type client struct {
-	ctx    context.Context
-	ctrl   context.Control
-	log    context.Logger
-	dialer net.Dialer
-	out    chan request
-	opts   Options
+	conn net.Connection
+	opts Options
 }
 
-func NewClient(ctx context.Context, dialer net.Dialer, o ...Option) Client {
-	ctx = ctx.Sub("RpcClient")
-	return &client{
-		ctx:    ctx,
-		ctrl:   ctx.Control(),
-		log:    ctx.Logger(),
-		dialer: dialer,
-		opts:   buildOptions(o)}
-}
+func Dial(dialer net.Dialer, o ...Option) (ret Client, err error) {
+	opts := buildOptions(o)
 
-func (s *client) Close() error {
-	return s.ctrl.Close()
-}
-
-func (s *client) Send(cancel <-chan struct{}, req Request) (res Response, err error) {
-	resp := make(chan Response, 1)
-	select {
-	case <-s.ctrl.Closed():
-		err = s.ctrl.Failure()
+	conn, err := dialer(opts.DialTimeout)
+	if err != nil {
 		return
-	case <-cancel:
-		err = errs.CanceledError
-		return
-	case s.out <- request{req, resp}:
 	}
 
-	select {
-	case <-s.ctrl.Closed():
-		err = s.ctrl.Failure()
-		return
-	case <-cancel:
-		err = errs.CanceledError
-		return
-	case res = <-resp:
-	}
+	ret = &client{conn: conn, opts: opts}
 	return
 }
 
-func (c *client) start() {
-
-	// The main connection manager.  This routine is responsible
-	// for maintaining a healthy connection to the remote endpoint.
-	// Only a single instance of this routine may be run at a
-	// given time.
-	go func() {
-		defer c.ctx.Close()
-
-		respond := func(req request, resp Response) {
-			select {
-			case <-c.ctrl.Closed():
-			case req.Resp <- resp:
-			}
-		}
-
-		for !c.ctrl.IsClosed() {
-			conn, err := c.reconnect()
-			if err != nil {
-				c.ctrl.Fail(err)
-				return
-			}
-
-			var req request
-			select {
-			case <-c.ctrl.Closed():
-				conn.Close()
-				return
-			case req = <-c.out:
-			}
-
-			if err := sendRequest(conn, req.Raw, c.opts); err != nil {
-				respond(req, Response{Error: err})
-				conn.Close()
-				continue
-			}
-
-			resp, err := recvResponse(conn, c.opts)
-			if err != nil {
-				respond(req, Response{Error: err})
-				conn.Close()
-				continue
-			}
-
-			respond(req, resp)
-		}
-	}()
-	return
+func (c *client) Close() error {
+	return c.conn.Close()
 }
 
-func (c *client) reconnect() (ret net.Connection, err error) {
-	c.log.Info("Reconnecting")
+func (c *client) Send(req Request) (res Response, err error) {
+	if err = sendRequest(c.conn, req, c.opts); err != nil {
+		c.Close()
+		return
+	}
 
-	// Uses exponential backoff to reduce congestion
-	sleep := 1 * time.Second
-	for {
-
-		if ret, err = c.dialer(c.opts.DialTimeout); err == nil {
-			c.log.Info("Connected")
-			return
-		}
-
-		c.log.Error("Error dialing router [%v]", err)
-
-		timer := time.After(sleep)
-		select {
-		case <-c.ctrl.Closed():
-			err = errs.Or(c.ctrl.Failure(), errs.ClosedError)
-			return
-		case <-timer:
-		}
-
-		if sleep < 30*time.Second {
-			sleep *= 2
-		}
-
-		c.log.Info("Attempting retry in [%v]", sleep)
+	if res, err = recvResponse(c.conn, c.opts); err != nil {
+		c.Close()
+		return
 	}
 	return
 }
@@ -229,8 +133,9 @@ func recvResponse(conn net.Connection, opts Options) (resp Response, err error) 
 	if err = conn.SetReadDeadline(time.Now().Add(opts.ReadTimeout)); err != nil {
 		return
 	}
-	var p packet
-	if err = readPacketRaw(conn, &p); err != nil {
+
+	p, err := readPacketRaw(conn)
+	if err != nil {
 		return
 	}
 

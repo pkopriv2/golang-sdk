@@ -70,13 +70,12 @@ func (s *server) Connect() (ret Client, err error) {
 		return s.listener.Connect(t)
 	}
 
-	ret = NewClient(s.context, dialer, func(o *Options) {
+	return Dial(dialer, func(o *Options) {
 		o.ReadTimeout = s.opts.ReadTimeout
 		o.DialTimeout = s.opts.DialTimeout
 		o.SendTimeout = s.opts.SendTimeout
 		o.Encoder = s.opts.Encoder
 	})
-	return
 }
 
 func (s *server) Close() error {
@@ -149,8 +148,9 @@ func recvRequest(conn net.Connection, opts Options) (req Request, err error) {
 	if err = conn.SetReadDeadline(time.Now().Add(opts.ReadTimeout)); err != nil {
 		return
 	}
-	var p packet
-	if err = readPacketRaw(conn, &p); err != nil {
+
+	p, err := readPacketRaw(conn)
+	if err != nil {
 		return
 	}
 

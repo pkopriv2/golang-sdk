@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/http/headers"
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 )
 
 var tlsMatch = regexp.MustCompile(":443$")
@@ -22,6 +22,11 @@ type HttpClient struct {
 	Address string
 }
 
+func NewClient(proto, addr string) (ret Client) {
+	ret = &HttpClient{http.DefaultClient, proto, addr}
+	return
+}
+
 func NewDefaultClient(addr string) (ret Client) {
 	var proto string
 	if tlsMatch.MatchString(addr) {
@@ -29,8 +34,8 @@ func NewDefaultClient(addr string) (ret Client) {
 	} else {
 		proto = "http"
 	}
-	ret = &HttpClient{http.DefaultClient, proto, addr}
-	return
+
+	return NewClient(proto, addr)
 }
 
 func (h *HttpClient) url(rel string, queries map[string]string) (ret *url.URL, err error) {

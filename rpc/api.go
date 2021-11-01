@@ -25,7 +25,7 @@ type Server interface {
 // A client gives consumers access to invoke a server's handlers.
 type Client interface {
 	io.Closer
-	Send(<-chan struct{}, Request) (Response, error)
+	Send(Request) (Response, error)
 }
 
 // A simple rpc request (FUTURE: Support authentication)
