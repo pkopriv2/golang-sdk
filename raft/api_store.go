@@ -13,9 +13,10 @@ import (
 
 // Storage api errors
 var (
-	ErrInvariant   = errors.New("Raft:ErrInvariant")
-	ErrOutOfBounds = errors.New("Raft:ErrOutOfBounds")
-	ErrCompaction  = errors.New("Raft:ErrCompaction")
+	ErrMissingEntry = errors.New("Raft:ErrMissingEntry")
+	ErrInvariant    = errors.New("Raft:ErrInvariant")
+	ErrOutOfBounds  = errors.New("Raft:ErrOutOfBounds")
+	ErrCompaction   = errors.New("Raft:ErrCompaction")
 )
 
 type LogStore interface {
@@ -26,6 +27,7 @@ type LogStore interface {
 
 type StoredLog interface {
 	Id() uuid.UUID
+	Store() LogStore
 	LastIndexAndTerm() (max int64, term int64, err error)
 	//Truncate(start int64) error
 	Scan(beg int64, end int64) ([]Entry, error)

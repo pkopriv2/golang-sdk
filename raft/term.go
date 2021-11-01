@@ -9,15 +9,9 @@ import (
 
 // A term represents a particular member state in the Raft epochal time model.
 type term struct {
-
-	// the current term number (increases monotonically across the cluster)
-	Num int `json:"num"`
-
-	// the current leader (as seen by this member)
-	Leader *uuid.UUID `json:"leader_id"`
-
-	// who was voted for this term (guaranteed not nil when leader != nil)
-	VotedFor *uuid.UUID `json:"voted_for"`
+	Num      int        `json:"num"`       // the current term number (increases monotonically across the cluster)
+	LeaderId *uuid.UUID `json:"leader_id"` // the current leader (as seen by this member)
+	VotedFor *uuid.UUID `json:"voted_for"` // who was voted for this term (guaranteed not nil when leader != nil)
 }
 
 var (
@@ -25,13 +19,10 @@ var (
 	termIdBucket = []byte("raft.term.id")
 )
 
-func initBoltTermBucket(tx *bolt.Tx) (err error) {
-	var e error
-	_, e = tx.CreateBucketIfNotExists(termBucket)
-	err = errs.Or(err, e)
-	_, e = tx.CreateBucketIfNotExists(termIdBucket)
-	err = errs.Or(err, e)
-	return
+func initBoltTermBucket(tx *bolt.Tx) error {
+	_, e1 := tx.CreateBucketIfNotExists(termBucket)
+	_, e2 := tx.CreateBucketIfNotExists(termIdBucket)
+	return errs.Or(e1, e2)
 }
 
 type termStore struct {

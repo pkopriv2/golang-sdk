@@ -125,7 +125,7 @@ func getSnapshotEvents(tx *bolt.Tx, snapshotId uuid.UUID, start, end int64) (ret
 			return nil, errors.Wrapf(err, "Unable to get snapshot event [%v] for snapshot [%v]", cur, snapshotId)
 		}
 		if !ok {
-			return nil, errors.Wrapf(ErrInvariant, "Missing expected entry [%v] for snapshot [%v]", cur, snapshotId)
+			return nil, errors.Wrapf(ErrMissingEntry, "Missing expected entry [%v] for snapshot [%v]", cur, snapshotId)
 		}
 		ret = append(ret, e)
 	}
@@ -355,7 +355,7 @@ func getLogEntries(tx *bolt.Tx, logId uuid.UUID, start, end int64) (ret []Entry,
 			return nil, err
 		}
 		if !ok {
-			return nil, errors.Wrapf(ErrInvariant, "Missing expected entry [%v] for log [%v]", cur, logId)
+			return nil, errors.Wrapf(ErrMissingEntry, "Missing expected entry [%v] for log [%v]", cur, logId)
 		}
 
 		ret = append(ret, entry)
@@ -497,9 +497,9 @@ func (b *BoltLog) Id() uuid.UUID {
 	return b.id
 }
 
-//func (b *BoltLog) Store() (LogStore, error) {
-//return &BoltStore{b.db}, nil
-//}
+func (b *BoltLog) Store() LogStore {
+	return &BoltStore{b.db}
+}
 
 func (b *BoltLog) Min() (m int64, e error) {
 	e = b.db.View(func(tx *bolt.Tx) error {

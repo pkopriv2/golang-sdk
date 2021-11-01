@@ -1,112 +1,115 @@
 package raft
 
-// FIXME: Split snapshot creating from the
+import (
+	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/context"
+)
 
 // NOTE: With regard to error handling, there are specific error causes that consumers
 // will be looking for.  Therefore, do NOT decorate any errors that are the result
 // of the StoredLog operation.
 
-//type eventLog struct {
-//ctx    context.Context
-//ctrl   context.Control
-//logger context.Logger
-//raw    StoredLog
-//head   *ref
-//commit *ref
-//}
+type eventLog struct {
+	ctx    context.Context
+	ctrl   context.Control
+	logger context.Logger
+	raw    StoredLog
+	head   *ref
+	commit *ref
+}
 
-//func openEventLog(ctx context.Context, log StoredLog) (*eventLog, error) {
-//head, _, err := log.Last()
-//if err != nil {
-//return nil, errors.Wrapf(err, "Unable to retrieve head position for segment [%v]", log.Id())
-//}
+func openEventLog(ctx context.Context, log StoredLog) (*eventLog, error) {
+	head, _, err := log.LastIndexAndTerm()
+	if err != nil {
+		return nil, errors.Wrapf(err, "Unable to retrieve head position for segment [%v]", log.Id())
+	}
 
-//ctx = ctx.Sub("EventLog")
+	ctx = ctx.Sub("EventLog")
 
-//headRef := newRef(head)
-//ctx.Control().Defer(func(error) {
-//ctx.Logger().Info("Closing head ref")
-//headRef.Close()
-//})
+	headRef := newRef(head)
+	ctx.Control().Defer(func(error) {
+		ctx.Logger().Info("Closing head ref")
+		headRef.Close()
+	})
 
-//commitRef := newRef(-1)
-//ctx.Control().Defer(func(error) {
-//ctx.Logger().Info("Closing commit ref")
-//commitRef.Close()
-//})
+	commitRef := newRef(-1)
+	ctx.Control().Defer(func(error) {
+		ctx.Logger().Info("Closing commit ref")
+		commitRef.Close()
+	})
 
-//return &eventLog{
-//ctx:    ctx,
-//ctrl:   ctx.Control(),
-//logger: ctx.Logger(),
-//raw:    log,
-//head:   headRef,
-//commit: commitRef}, nil
-//}
+	return &eventLog{
+		ctx:    ctx,
+		ctrl:   ctx.Control(),
+		logger: ctx.Logger(),
+		raw:    log,
+		head:   headRef,
+		commit: commitRef}, nil
+}
 
-//func (e *eventLog) Close() error {
-//return e.ctrl.Close()
-//}
+func (e *eventLog) Close() error {
+	return e.ctrl.Close()
+}
 
-//func (e *eventLog) Head() int {
-//return e.head.Get()
-//}
+func (e *eventLog) Head() int64 {
+	return e.head.Get()
+}
 
-//func (e *eventLog) Committed() (pos int) {
-//return e.commit.Get()
-//}
+func (e *eventLog) Committed() (pos int64) {
+	return e.commit.Get()
+}
 
-//func (e *eventLog) Commit(pos int) (actual int, err error) {
-//var head int
-//actual = e.commit.Update(func(cur int) int {
-//head, _, err = e.raw.Last()
-//if err != nil {
-//return cur
-//}
+func (e *eventLog) Commit(pos int64) (actual int64, err error) {
+	var head int64
+	actual = e.commit.Update(func(cur int64) int64 {
+		head, _, err = e.raw.LastIndexAndTerm()
+		if err != nil {
+			return cur
+		}
 
-//return max(cur, min(pos, head))
-//})
-//return
-//}
+		return max(cur, min(pos, head))
+	})
+	return
+}
 
-//func (e *eventLog) Get(index int) (Entry, bool, error) {
-//return e.raw.Get(index)
-//}
+func (e *eventLog) Get(index int64) (Entry, bool, error) {
+	return e.raw.Get(index)
+}
 
-//func (e *eventLog) Scan(start int, end int) ([]Entry, error) {
-//return e.raw.Scan(start, end)
-//}
+func (e *eventLog) Scan(start int64, end int64) ([]Entry, error) {
+	return e.raw.Scan(start, end)
+}
 
-//func (e *eventLog) Append(evt Event, term int, k Kind) (Entry, error) {
-//item, err := e.raw.Append(evt, term, k)
-//if err != nil {
-//return item, err
-//}
+func (e *eventLog) Append(evt Event, term int64, k Kind) (Entry, error) {
+	item, err := e.raw.Append(evt, term, k)
+	if err != nil {
+		return item, err
+	}
 
-//e.head.Update(func(cur int) int {
-//return max(cur, item.Index)
-//})
+	e.head.Update(func(cur int64) int64 {
+		return max(cur, item.Index)
+	})
 
-//return item, nil
-//}
+	return item, nil
+}
 
-//func (e *eventLog) Insert(batch []Entry) error {
-//if len(batch) == 0 {
-//return nil
-//}
+func (e *eventLog) Insert(batch []Entry) error {
+	if len(batch) == 0 {
+		return nil
+	}
 
-//if err := e.raw.Insert(batch); err != nil {
-//return err
-//}
+	if err := e.raw.Insert(batch); err != nil {
+		return err
+	}
 
-//e.head.Update(func(cur int) int {
-//return max(cur, batch[len(batch)-1].Index)
-//})
-//return nil
-//}
+	e.head.Update(func(cur int64) int64 {
+		return max(cur, batch[len(batch)-1].Index)
+	})
+	return nil
+}
 
-//func (e *eventLog) Truncate(from int) (err error) {
-//e.head.Update(func(cur int) int {
+//func (e *eventLog) Truncate(from int64) (err error) {
+//e.head.Update(func(cur int64) int64 {
 //if from > cur {
 //return cur
 //}
@@ -121,211 +124,203 @@ package raft
 //return
 //}
 
-//func (e *eventLog) Snapshot() (StoredSnapshot, error) {
-//return e.raw.Snapshot()
-//}
+func (e *eventLog) Snapshot() (StoredSnapshot, error) {
+	return e.raw.Snapshot()
+}
 
-//// only called from followers.
-//func (e *eventLog) Assert(index int, term int) (bool, error) {
-//item, ok, err := e.Get(index)
-//if err != nil {
-//return false, err
-//}
+// only called from followers.
+func (e *eventLog) Assert(index int64, term int64) (bool, error) {
+	item, ok, err := e.Get(index)
+	if err != nil {
+		return false, err
+	}
 
-//if ok {
-//return item.Term == term, nil
-//}
+	if ok {
+		return item.Term == term, nil
+	}
 
-//s, err := e.Snapshot()
-//if err != nil {
-//return false, err
-//}
+	s, err := e.Snapshot()
+	if err != nil {
+		return false, err
+	}
 
-//return s.LastIndex() == index && s.LastTerm() == term, nil
-//}
+	return s.LastIndex() == index && s.LastTerm() == term, nil
+}
 
-//func (e *eventLog) NewSnapshot(lastIndex int, lastTerm int, ch <-chan Event, size int, config Config) (StoredSnapshot, error) {
-//store, err := e.raw.Store()
-//if err != nil {
-//return nil, err
-//}
+func (e *eventLog) NewSnapshot(lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
+	return e.raw.Store().NewSnapshot(lastIndex, lastTerm, ch, config)
+}
 
-//return store.NewSnapshot(lastIndex, lastTerm, ch, size, config)
-//}
+func (e *eventLog) Install(snapshot StoredSnapshot) error {
+	err := e.raw.Install(snapshot)
+	if err != nil {
+		return err
+	}
 
-//func (e *eventLog) Install(snapshot StoredSnapshot) error {
-//err := e.raw.Install(snapshot)
-//if err != nil {
-//return err
-//}
+	last := snapshot.LastIndex()
+	e.head.Update(func(cur int64) int64 {
+		if cur < last {
+			return last
+		} else {
+			return cur
+		}
+	})
 
-//last := snapshot.LastIndex()
-//e.head.Update(func(cur int) int {
-//if cur < last {
-//return last
-//} else {
-//return cur
-//}
-//})
+	return err
+}
 
-//return err
-//}
+func (e *eventLog) Compact(until int64, data <-chan Event, config Config) error {
+	item, ok, err := e.Get(until)
+	if err != nil || !ok {
+		return errors.Wrapf(ErrCompaction, "Cannot compact until [%v].  It doesn't exist", until)
+	}
 
-//func (e *eventLog) Compact(until int, data <-chan Event, size int, config Config) error {
-//item, ok, err := e.Get(until)
-//if err != nil || !ok {
-//return errors.Wrapf(CompactionError, "Cannot compact until [%v].  It doesn't exist", until)
-//}
+	snapshot, err := e.NewSnapshot(item.Index, item.Term, data, config)
+	if err != nil {
+		return err
+	}
 
-//snapshot, err := e.NewSnapshot(item.Index, item.Term, data, size, config)
-//if err != nil {
-//return err
-//}
+	return e.raw.Install(snapshot)
+}
 
-//return e.raw.Install(snapshot)
-//}
+func (e *eventLog) LastIndexAndTerm() (int64, int64, error) {
+	return e.raw.LastIndexAndTerm()
+}
 
-//func (e *eventLog) Last() (int, int, error) {
-//return e.raw.Last()
-//}
+func (e *eventLog) ListenCommits(start int64, buf int64) (Listener, error) {
+	if e.ctrl.IsClosed() {
+		return nil, errors.WithStack(ClosedError)
+	}
 
-//func (e *eventLog) ListenCommits(from int, buf int) (Listener, error) {
-//if e.ctrl.IsClosed() {
-//return nil, errors.WithStack(ClosedError)
-//}
+	return newRefListener(e, e.commit, start, buf), nil
+}
 
-//return newRefListener(e, e.commit, from, buf), nil
-//}
+func (e *eventLog) ListenAppends(start int64, buf int64) (Listener, error) {
+	if e.ctrl.IsClosed() {
+		return nil, errors.WithStack(ClosedError)
+	}
 
-//func (e *eventLog) ListenAppends(from int, buf int) (Listener, error) {
-//if e.ctrl.IsClosed() {
-//return nil, errors.WithStack(ClosedError)
-//}
+	return newRefListener(e, e.head, start, buf), nil
+}
 
-//return newRefListener(e, e.head, from, buf), nil
-//}
+type snapshot struct {
+	raw       StoredSnapshot
+	PrevIndex int64
+	PrevTerm  int64
+}
 
-//type snapshot struct {
-//raw       StoredSnapshot
-//PrevIndex int
-//PrevTerm  int
-//}
+func (s *snapshot) Size() int64 {
+	return s.raw.Size()
+}
 
-//func (s *snapshot) Size() int {
-//return s.raw.Size()
-//}
+func (s *snapshot) Config() Config {
+	return s.raw.Config()
+}
 
-//func (s *snapshot) Config() Config {
-//return s.raw.Config()
-//}
+func (s *snapshot) Events(cancel <-chan struct{}) <-chan Event {
+	ch := make(chan Event)
+	go func() {
+		for cur := int64(0); cur < s.raw.Size(); {
+			batch, err := s.raw.Scan(cur, min(cur, cur+256))
+			if err != nil {
+				return
+			}
 
-//func (s *snapshot) Events(cancel <-chan struct{}) <-chan Event {
-//ch := make(chan Event)
-//go func() {
-//for cur := 0; cur < s.raw.Size(); {
-//batch, err := s.raw.Scan(cur, min(cur, cur+256))
-//if err != nil {
-//return
-//}
+			for _, e := range batch {
+				select {
+				case ch <- e:
+				case <-cancel:
+					return
+				}
+			}
 
-//for _, e := range batch {
-//select {
-//case ch <- e:
-//case <-cancel:
-//return
-//}
-//}
+			cur = cur + int64(len(batch))
+		}
 
-//cur = cur + len(batch)
-//}
+		close(ch)
+	}()
+	return ch
+}
 
-//close(ch)
-//}()
-//return ch
-//}
+type refListener struct {
+	log    *eventLog
+	pos    *ref
+	buf    int64
+	ch     chan Entry
+	ctrl   context.Control
+	logger context.Logger
+}
 
-//type refListener struct {
-//log    *eventLog
-//pos    *ref
-//buf    int
-//ch     chan Entry
-//ctrl   context.Control
-//logger context.Logger
-//}
+func newRefListener(log *eventLog, pos *ref, from int64, buf int64) *refListener {
+	ctx := log.ctx.Sub("Listener")
 
-//func newRefListener(log *eventLog, pos *ref, from int, buf int) *refListener {
-//ctx := log.ctx.Sub("Listener")
+	l := &refListener{
+		log:    log,
+		pos:    pos,
+		buf:    buf,
+		ch:     make(chan Entry, buf),
+		ctrl:   ctx.Control(),
+		logger: ctx.Logger(),
+	}
+	l.start(from)
+	return l
+}
 
-//l := &refListener{
-//log:    log,
-//pos:    pos,
-//buf:    buf,
-//ch:     make(chan Entry, buf),
-//ctrl:   ctx.Control(),
-//logger: ctx.Logger(),
-//}
-//l.start(from)
-//return l
-//}
+func (l *refListener) start(from int64) {
+	go func() {
+		defer l.Close()
 
-//func (l *refListener) start(from int) {
-//go func() {
-//defer l.Close()
+		cur := from
+		for {
+			next, ok := l.pos.WaitUntil(cur)
+			if !ok || l.ctrl.IsClosed() || l.log.ctrl.IsClosed() {
+				return
+			}
 
-//for beg := from; ; {
-//// l.logger.Debug("Next [%v]", beg)
+			// FIXME: Can still miss truncations
+			if next < cur {
+				l.ctrl.Fail(errors.Wrapf(ErrOutOfBounds, "Log truncated to [%v] was [%v]", next, cur))
+				return
+			}
 
-//next, ok := l.pos.WaitUntil(beg)
-//if !ok || l.ctrl.IsClosed() || l.log.ctrl.IsClosed() {
-//return
-//}
+			for cur <= next {
+				if l.ctrl.IsClosed() || l.log.ctrl.IsClosed() {
+					return
+				}
 
-//// l.logger.Debug("Update: [%v->%v]", beg, next)
+				// scan the next batch
+				batch, err := l.log.Scan(cur, min(next, cur+l.buf))
+				if err != nil {
+					l.ctrl.Fail(err)
+					return
+				}
 
-//// FIXME: Can still miss truncations
-//if next < beg {
-//l.ctrl.Fail(errors.Wrapf(OutOfBoundsError, "Log truncated to [%v] was [%v]", next, beg))
-//return
-//}
+				// start emitting
+				for _, i := range batch {
+					select {
+					case <-l.log.ctrl.Closed():
+						return
+					case <-l.ctrl.Closed():
+						return
+					case l.ch <- i:
+					}
+				}
 
-//for beg <= next {
-//if l.ctrl.IsClosed() || l.log.ctrl.IsClosed() {
-//return
-//}
+				// update current
+				cur = cur + int64(len(batch))
+			}
+		}
+	}()
+}
 
-//// scan the next batch
-//batch, err := l.log.Scan(beg, min(next, beg+l.buf))
-//if err != nil {
-//l.ctrl.Fail(err)
-//return
-//}
+func (p *refListener) Data() <-chan Entry {
+	return p.ch
+}
 
-//// start emitting
-//for _, i := range batch {
-//select {
-//case <-l.log.ctrl.Closed():
-//return
-//case <-l.ctrl.Closed():
-//return
-//case l.ch <- i:
-//}
-//}
+func (p *refListener) Ctrl() context.Control {
+	return p.ctrl
+}
 
-//// update current
-//beg = beg + len(batch)
-//}
-//}
-//}()
-//}
-
-//func (p *refListener) Data() <-chan Entry {
-//return p.ch
-//}
-
-//func (p *refListener) Ctrl() context.Control {
-//return p.ctrl
-//}
-
-//func (l *refListener) Close() error {
-//return l.ctrl.Close()
-//}
+func (l *refListener) Close() error {
+	return l.ctrl.Close()
+}

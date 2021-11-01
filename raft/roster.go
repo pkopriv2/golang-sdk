@@ -9,7 +9,7 @@ func newRoster(init []Peer) *roster {
 	return &roster{raw: init, ver: newRef(0)}
 }
 
-func (c *roster) Wait(next int) ([]Peer, int, bool) {
+func (c *roster) Wait(next int64) ([]Peer, int64, bool) {
 	_, ok := c.ver.WaitExceeds(next)
 	peers, ver := c.Get()
 	return peers, ver, ok
@@ -20,15 +20,15 @@ func (c *roster) Notify() {
 }
 
 func (c *roster) Set(peers []Peer) {
-	c.ver.Update(func(cur int) int {
+	c.ver.Update(func(cur int64) int64 {
 		c.raw = peers
 		return cur + 1
 	})
 }
 
 // not taking copy as it is assumed that array is immutable
-func (c *roster) Get() (peers []Peer, ver int) {
-	c.ver.Update(func(cur int) int {
+func (c *roster) Get() (peers []Peer, ver int64) {
+	c.ver.Update(func(cur int64) int64 {
 		peers, ver = c.raw, cur
 		return cur
 	})
@@ -140,7 +140,7 @@ func (c *roster) Close() {
 //}()
 //}
 
-//func (r *rosterManager) reloadRoster() ([]Peer, int, error) {
+//func (r *rosterManager) reloadRoster() ([]Peer, int64, error) {
 //snapshot, err := r.self.Log.Snapshot()
 //if err != nil {
 //return nil, 0, errors.Wrapf(err, "Error getting snapshot")
@@ -154,7 +154,7 @@ func (c *roster) Close() {
 //return peers, snapshot.LastIndex(), nil
 //}
 
-//func (r *rosterManager) listenAppends(offset int) (Listener, error) {
+//func (r *rosterManager) listenAppends(offset int64) (Listener, error) {
 //r.logger.Info("Listening to appends from offset [%v]", offset)
 
 //l, err := r.self.Log.ListenAppends(offset, 256)
@@ -165,7 +165,7 @@ func (c *roster) Close() {
 //return l, nil
 //}
 
-//func (r *rosterManager) listenCommits(offset int) (Listener, error) {
+//func (r *rosterManager) listenCommits(offset int64) (Listener, error) {
 //r.logger.Info("Listening to commits from offset [%v]", offset)
 
 //l, err := r.self.Log.ListenCommits(offset, 256)

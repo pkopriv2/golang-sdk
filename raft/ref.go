@@ -6,19 +6,19 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/context"
 )
 
-// A simply notifying integer value.
+// A simply notifying int64eger value.
 
 type ref struct {
-	val  int
+	val  int64
 	lock *sync.Cond
 	dead bool
 }
 
-func newRef(val int) *ref {
+func newRef(val int64) *ref {
 	return &ref{val, &sync.Cond{L: &sync.Mutex{}}, false}
 }
 
-func (c *ref) WaitExceeds(cur int) (val int, alive bool) {
+func (c *ref) WaitExceeds(cur int64) (val int64, alive bool) {
 	c.lock.L.Lock()
 	defer c.lock.L.Unlock()
 	for val, alive = c.val, !c.dead; val <= cur && alive; val, alive = c.val, !c.dead {
@@ -27,7 +27,7 @@ func (c *ref) WaitExceeds(cur int) (val int, alive bool) {
 	return
 }
 
-func (c *ref) WaitUntil(cur int) (val int, alive bool) {
+func (c *ref) WaitUntil(cur int64) (val int64, alive bool) {
 	c.lock.L.Lock()
 	defer c.lock.L.Unlock()
 	for val, alive = c.val, !c.dead; val < cur && alive; val, alive = c.val, !c.dead {
@@ -36,7 +36,7 @@ func (c *ref) WaitUntil(cur int) (val int, alive bool) {
 	return
 }
 
-func (c *ref) WaitUntilOrCancel(cancel <-chan struct{}, until int) (val int, alive bool) {
+func (c *ref) WaitUntilOrCancel(cancel <-chan struct{}, until int64) (val int64, alive bool) {
 	ctrl := context.NewControl(nil)
 	defer ctrl.Close()
 	go func() {
@@ -68,9 +68,9 @@ func (c *ref) Close() {
 	c.dead = true
 }
 
-func (c *ref) Update(fn func(int) int) int {
-	var cur int
-	var ret int
+func (c *ref) Update(fn func(int64) int64) int64 {
+	var cur int64
+	var ret int64
 	defer func() {
 		if cur != ret {
 			c.lock.Broadcast()
@@ -85,13 +85,13 @@ func (c *ref) Update(fn func(int) int) int {
 	return ret
 }
 
-func (c *ref) Set(pos int) int {
-	return c.Update(func(int) int {
+func (c *ref) Set(pos int64) int64 {
+	return c.Update(func(int64) int64 {
 		return pos
 	})
 }
 
-func (c *ref) Get() (pos int) {
+func (c *ref) Get() (pos int64) {
 	c.lock.L.Lock()
 	defer c.lock.L.Unlock()
 	return c.val
