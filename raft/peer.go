@@ -2,7 +2,9 @@ package raft
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/pkopriv2/golang-sdk/lang/net"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -70,16 +72,11 @@ func (peers Peers) Equals(o Peers) bool {
 	return true
 }
 
-//func (p Peer) ClientPool(ctx common.Context, net net.Network, timeout time.Duration, num int) net.ConnectionPool {
-//return common.NewObjectPool(ctx.Control(), num, func() (io.Closer, error) {
-//cl, err := p.Client(ctx, net, timeout)
-//if err == nil {
-//return cl, nil
-//} else {
-//return nil, err
-//}
-//})
-//}
+func (p Peer) ClientPool(network net.Network, timeout time.Duration, num int) net.ConnectionPool {
+	return net.NewConnectionPool(num, timeout, func(timeout time.Duration) (net.Connection, error) {
+		return network.Dial(timeout, p.Addr)
+	})
+}
 
 //func (p Peer) Client(ctx common.Context, network net.Network, timeout time.Duration) (*rpcClient, error) {
 //raw, err := network.Dial(timeout, p.Addr)

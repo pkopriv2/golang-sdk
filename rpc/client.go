@@ -55,11 +55,17 @@ func WithSendTimeout(timeout time.Duration) Option {
 	}
 }
 
-func WithListener(n net.Network, addr string) Option {
+func WithListener(l net.Listener) Option {
 	return func(o *Options) {
 		o.Listener = func() (net.Listener, error) {
-			return n.Listen(addr)
+			return l, nil
 		}
+	}
+}
+
+func WithNumWorkers(num int) Option {
+	return func(o *Options) {
+		o.NumWorkers = num
 	}
 }
 

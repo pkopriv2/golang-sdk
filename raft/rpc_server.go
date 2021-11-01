@@ -1,119 +1,125 @@
 package raft
 
-//type rpcServer struct {
-//ctx    common.Context
-//logger common.Logger
-//self   *replica
-//}
+import (
+	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/pkopriv2/golang-sdk/lang/enc"
+	"github.com/pkopriv2/golang-sdk/lang/net"
+	"github.com/pkopriv2/golang-sdk/rpc"
+)
 
-//// Returns a new service handler for the ractlica
-//func newServer(ctx common.Context, self *replica, listener net.Listener, workers int) (net.Server, error) {
-//server := &rpcServer{ctx: ctx, logger: ctx.Logger(), self: self}
-//return net.NewServer(ctx, listener, serverInitHandler(server), workers)
-//}
+type rpcServer struct {
+	ctx    context.Context
+	logger context.Logger
+	self   *replica
+	enc    enc.EncoderDecoder
+}
 
-//func serverInitHandler(s *rpcServer) func(net.Request) net.Response {
-//return func(req net.Request) net.Response {
-//action, err := readMeta(req.Meta())
-//if err != nil {
-//return net.NewErrorResponse(errors.Wrap(err, "Error parsing action"))
-//}
+// Returns a new service handler for the ractlica
+func newServer(ctx context.Context, self *replica, listener net.Listener, workers int) (rpc.Server, error) {
+	server := &rpcServer{
+		ctx:    ctx,
+		logger: ctx.Logger(),
+		self:   self,
+		enc:    enc.Gob}
 
-//switch action {
-//default:
-//return net.NewErrorResponse(errors.Errorf("Unknown action %v", action))
-//case actStatus:
-//return s.Status(req)
-//case actReadBarrier:
-//return s.ReadBarrier(req)
-//case actReplicate:
-//return s.Replicate(req)
-//case actRequestVote:
-//return s.RequestVote(req)
-//case actAppend:
-//return s.Append(req)
-//case actUpdateRoster:
-//return s.UpdateRoster(req)
-//case actInstallSnapshot:
-//return s.InstallSnapshot(req)
-//}
-//}
-//}
+	return rpc.Serve(ctx,
+		rpc.BuildHandlers(
+			rpc.WithHandler(funcStatus, server.Status),
+			rpc.WithHandler(funcReadBarrier, server.ReadBarrier),
+			rpc.WithHandler(funcRequestVote, server.RequestVote),
+			rpc.WithHandler(funcUpdateRoster, server.UpdateRoster),
+			rpc.WithHandler(funcReplicate, server.Replicate),
+			rpc.WithHandler(funcAppend, server.Append),
+			rpc.WithHandler(funcInstallSnapshot, server.InstallSnapshot),
+		),
+		rpc.WithListener(listener),
+		rpc.WithNumWorkers(workers))
+}
 
-//func (s *rpcServer) Status(req net.Request) net.Response {
-//return status{s.self.Id, s.self.CurrentTerm(), s.self.Cluster()}.Response()
-//}
+func (s *rpcServer) Status(req rpc.Request) rpc.Response {
+	return rpc.NewStructResponse(s.enc,
+		statusResponse{
+			LeaderId: s.self.Id,
+			Term:     s.self.CurrentTerm(),
+			Config:   Config{s.self.Cluster()}})
+}
 
-//func (s *rpcServer) ReadBarrier(req net.Request) net.Response {
-//val, err := s.self.ReadBarrier()
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+func (s *rpcServer) ReadBarrier(req rpc.Request) rpc.Response {
+	val, err := s.self.ReadBarrier()
+	if err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//return newReadBarrierResponse(val)
-//}
+	return rpc.NewStructResponse(s.enc,
+		readBarrierResponse{
+			Barrier: val,
+		})
+}
 
-//func (s *rpcServer) UpdateRoster(req net.Request) net.Response {
-//update, err := readRosterUpdate(req.Body())
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+func (s *rpcServer) UpdateRoster(raw rpc.Request) rpc.Response {
+	var req rosterUpdateRequest
+	if err := raw.Decode(s.enc, &req); err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//return net.NewErrorResponse(s.self.UpdateRoster(update))
-//}
+	return rpc.NewErrorResponse(s.self.UpdateRoster(req))
+}
 
-//func (s *rpcServer) InstallSnapshot(req net.Request) net.Response {
-//snapshot, err := readInstallSnapshot(req.Body())
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+func (s *rpcServer) InstallSnapshot(raw rpc.Request) rpc.Response {
+	var req installSnapshotRequest
+	if err := raw.Decode(s.enc, &req); err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//resp, err := s.self.InstallSnapshot(snapshot)
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+	resp, err := s.self.InstallSnapshot(req)
+	if err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//return resp.Response()
-//}
+	return rpc.NewStructResponse(s.enc, resp)
+}
 
-//func (s *rpcServer) Replicate(req net.Request) net.Response {
-//replicate, err := readReplicate(req.Body())
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+func (s *rpcServer) Replicate(raw rpc.Request) rpc.Response {
+	var req replicateRequest
+	if err := raw.Decode(s.enc, &req); err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//resp, err := s.self.Replicate(replicate)
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+	resp, err := s.self.Replicate(req)
+	if err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//return resp.Response()
-//}
+	return rpc.NewStructResponse(s.enc, resp)
+}
 
-//func (s *rpcServer) RequestVote(req net.Request) net.Response {
-//voteRequest, err := readRequestVote(req.Body())
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+func (s *rpcServer) RequestVote(raw rpc.Request) rpc.Response {
+	var req voteRequest
+	if err := raw.Decode(s.enc, &req); err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//resp, err := s.self.RequestVote(voteRequest)
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+	resp, err := s.self.RequestVote(req)
+	if err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//return resp.Response()
-//}
+	return rpc.NewStructResponse(s.enc, resp)
+}
 
-//func (s *rpcServer) Append(req net.Request) net.Response {
-//append, err := readAppendEvent(req.Body())
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+func (s *rpcServer) Append(raw rpc.Request) rpc.Response {
+	var req appendEventRequest
+	if err := raw.Decode(s.enc, &req); err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//item, err := s.self.RemoteAppend(append)
-//if err != nil {
-//return net.NewErrorResponse(err)
-//}
+	item, err := s.self.RemoteAppend(req)
+	if err != nil {
+		return rpc.NewErrorResponse(err)
+	}
 
-//return appendEventResponse{item.Index, item.Term}.Response()
-//}
+	return rpc.NewStructResponse(s.enc, appendEventResponse{
+		Index: item.Index,
+		Term:  item.Term,
+	})
+}

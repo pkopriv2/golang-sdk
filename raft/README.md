@@ -6,8 +6,7 @@ consistent state machines, without all the hassle of managing consensus.
 # Distributed Consensus
 
 Distributed consensus is the process by which a group of machines is able to agree to a set of facts.  In the case
-of Kayak, and its progenitor, RAFT, the algorithm ensures that a log is consistent across a set of members.  The 
-log has the following guarantees:
+of Raft, the algorithm ensures that a log is consistent across a set of members.  The log has the following guarantees:
 
 * All committed items will eventually be received by all live members
 * All committed items will be received in the order they are written
@@ -89,9 +88,6 @@ More details to come.
 # Contributors
 
 * Preston Koprivica: pkopriv2@gmail.com
-* Andy Attebery: andyatterbery@gmail.com
-* Mike Antonelli: mikeantonelli@me.com
-* Danny Purcell: mikeantonelli@me.com
 
 # References:
 

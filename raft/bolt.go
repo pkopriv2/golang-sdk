@@ -111,10 +111,15 @@ func putSnapshotEvents(db *bolt.DB, snapshotId uuid.UUID, ch <-chan Event) (num 
 	}
 }
 
-// Scans a range of the snapshot - inclusive of start and end.
+// Scans a range of the snapshot - [start, end)
 func getSnapshotEvents(tx *bolt.Tx, snapshotId uuid.UUID, start, end int64) (ret []Event, err error) {
-	ret = make([]Event, 0, end-start+1)
-	for cur := start; cur <= end; cur++ {
+	if start < 0 {
+		err = errors.Wrapf(ErrOutOfBounds, "Invalid start [%v] when scanning snapshot events", start)
+		return
+	}
+
+	ret = make([]Event, 0, end-start)
+	for cur := start; cur < end; cur++ {
 		e, ok, err := getSnapshotEvent(tx, snapshotId, cur)
 		if err != nil {
 			return nil, errors.Wrapf(err, "Unable to get snapshot event [%v] for snapshot [%v]", cur, snapshotId)
@@ -190,7 +195,7 @@ func setMinIndex(tx *bolt.Tx, logId uuid.UUID, min int64) error {
 
 func getActiveSnapshot(tx *bolt.Tx, logId uuid.UUID) (ret uuid.UUID, err error) {
 	raw := tx.Bucket(logSnapshotBucket).Get(bin.UUID(logId))
-	if raw != nil {
+	if raw == nil {
 		err = errors.Errorf("Missing snapshot id for log [%v]", logId)
 		return
 	}
@@ -325,7 +330,7 @@ func putLogEntries(tx *bolt.Tx, logId uuid.UUID, batch []Entry) error {
 	return nil
 }
 
-func appendLogEntry(tx *bolt.Tx, logId uuid.UUID, e Event, term int64, k Kind) (ret Entry, err error) {
+func appendLogEntry(tx *bolt.Tx, logId uuid.UUID, e []byte, term int64, k Kind) (ret Entry, err error) {
 	max, _, err := getMaxIndexAndTerm(tx, logId)
 	if err != nil {
 		return
@@ -342,9 +347,15 @@ func appendLogEntry(tx *bolt.Tx, logId uuid.UUID, e Event, term int64, k Kind) (
 	return
 }
 
+// Scans a range of the log - [start, end)
 func getLogEntries(tx *bolt.Tx, logId uuid.UUID, start, end int64) (ret []Entry, err error) {
-	ret = make([]Entry, 0, end-start+1)
-	for cur := start; cur <= end; cur++ {
+	if start < 0 {
+		err = errors.Wrapf(ErrOutOfBounds, "Invalid scan start [%v]", start)
+		return
+	}
+
+	ret = make([]Entry, 0, end-start)
+	for cur := start; cur < end; cur++ {
 		entry, ok, err := getLogEntry(tx, logId, cur)
 		if err != nil {
 			return nil, err
@@ -358,7 +369,7 @@ func getLogEntries(tx *bolt.Tx, logId uuid.UUID, start, end int64) (ret []Entry,
 	return
 }
 
-func pruneLogEntries(tx *bolt.Tx, logId uuid.UUID, until int64) (err error) {
+func trimLeftLogEntries(tx *bolt.Tx, logId uuid.UUID, until int64) (err error) {
 	minIdx, err := getMinIndex(tx, logId)
 	if err != nil {
 		return
@@ -404,13 +415,65 @@ func pruneLogEntries(tx *bolt.Tx, logId uuid.UUID, until int64) (err error) {
 	return
 }
 
+func trimRightLogEntries(tx *bolt.Tx, logId uuid.UUID, from int64) (err error) {
+	minIdx, err := getMinIndex(tx, logId)
+	if err != nil {
+		return
+	}
+
+	maxIdx, err := getMaxIndex(tx, logId)
+	if err != nil {
+		return
+	}
+
+	// nothing to trim
+	if minIdx == -1 || maxIdx == -1 {
+		return
+	}
+
+	if from < minIdx {
+		err = errors.Wrapf(ErrOutOfBounds, "Cannot trim right [%v].  From is less than min", from)
+		return
+	}
+
+	if from > maxIdx {
+		err = errors.Wrapf(ErrOutOfBounds, "Cannot trim right [%v].  From is greater than max", from)
+		return
+	}
+
+	for cur := from; cur < maxIdx; cur++ {
+		if err = deleteLogEntry(tx, logId, cur); err != nil {
+			return
+		}
+	}
+
+	newMin := from + 1
+	newMax := maxIdx
+	if from == maxIdx {
+		newMin = -1
+		newMax = -1
+	}
+
+	if err = setMinIndex(tx, logId, newMin); err != nil {
+		err = errors.Wrapf(err, "Error setting min index [%v]", newMin)
+		return
+	}
+
+	if err = setMaxIndex(tx, logId, newMax); err != nil {
+		err = errors.Wrapf(err, "Error setting max index [%v]", newMax)
+		return
+	}
+
+	return
+}
+
 func checkBoltLog(tx *bolt.Tx, id uuid.UUID) bool {
 	raw := tx.Bucket(logBucket).Get(bin.UUID(id))
 	return raw != nil
 }
 
 func initBoltLog(tx *bolt.Tx, logId uuid.UUID, snapshotId uuid.UUID) error {
-	e1 := tx.Bucket(logBucket).Put(bin.UUID(snapshotId), []byte{})
+	e1 := tx.Bucket(logBucket).Put(bin.UUID(logId), []byte{})
 	e2 := setMinIndex(tx, logId, -1)
 	e3 := setMaxIndex(tx, logId, -1)
 	e4 := setActiveSnapshot(tx, logId, snapshotId)
@@ -430,16 +493,15 @@ func NewBoltStore(db *bolt.DB) (LogStore, error) {
 	return &BoltStore{db}, nil
 }
 
-func (s *BoltStore) Get(id uuid.UUID) (StoredLog, error) {
+func (s *BoltStore) GetLog(id uuid.UUID) (StoredLog, error) {
 	log, err := openBoltLog(s.db, id)
 	if err != nil || log == nil {
 		return nil, err
 	}
-
 	return log, nil
 }
 
-func (s *BoltStore) New(id uuid.UUID, config Config) (StoredLog, error) {
+func (s *BoltStore) NewLog(id uuid.UUID, config Config) (StoredLog, error) {
 	return createBoltLog(s.db, id, config)
 }
 
@@ -468,7 +530,6 @@ func createBoltLog(db *bolt.DB, id uuid.UUID, config Config) (log *BoltLog, err 
 		if checkBoltLog(tx, id) {
 			return errors.Wrapf(ErrInvariant, "Log [%v] already exists", id)
 		}
-
 		return initBoltLog(tx, id, s.Id())
 	})
 	if err != nil {
@@ -520,9 +581,15 @@ func (b *BoltLog) LastIndexAndTerm() (i int64, t int64, e error) {
 	return
 }
 
-func (b *BoltLog) Prune(until int64) error {
+func (b *BoltLog) TrimLeft(end int64) error {
 	return b.db.Update(func(tx *bolt.Tx) (e error) {
-		return pruneLogEntries(tx, b.Id(), until)
+		return trimLeftLogEntries(tx, b.Id(), end)
+	})
+}
+
+func (b *BoltLog) TrimRight(start int64) error {
+	return b.db.Update(func(tx *bolt.Tx) (e error) {
+		return trimRightLogEntries(tx, b.Id(), start)
 	})
 }
 
@@ -534,7 +601,7 @@ func (b *BoltLog) Scan(beg int64, end int64) (i []Entry, e error) {
 	return
 }
 
-func (b *BoltLog) Append(event Event, term int64, kind Kind) (i Entry, e error) {
+func (b *BoltLog) Append(event []byte, term int64, kind Kind) (i Entry, e error) {
 	e = b.db.Update(func(tx *bolt.Tx) error {
 		i, e = appendLogEntry(tx, b.Id(), event, term, kind)
 		return e
@@ -587,7 +654,7 @@ func (b *BoltLog) Install(s StoredSnapshot) error {
 	}
 
 	// finally, truncate (safe to do concurrently)
-	err = b.Prune(s.LastIndex())
+	err = b.TrimLeft(s.LastIndex())
 	if err != nil {
 		return err
 	}

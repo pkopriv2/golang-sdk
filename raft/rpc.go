@@ -6,13 +6,13 @@ import (
 
 // server endpoints
 const (
-	funcReadBarrier     = "raft.replica.read.barrier"
-	funcStatus          = "raft.replica.status"
-	funcRequestVote     = "raft.replica.requestVote"
-	funcUpdateRoster    = "raft.replica.roster"
-	funcReplicate       = "raft.replica.replicate"
-	funcAppend          = "raft.replica.append"
-	funcInstallSnapshot = "raft.replica.snapshot"
+	funcReadBarrier     = "raft.readBarrier"
+	funcStatus          = "raft.status"
+	funcRequestVote     = "raft.requestVote"
+	funcUpdateRoster    = "raft.roster"
+	funcReplicate       = "raft.replicate"
+	funcAppend          = "raft.append"
+	funcInstallSnapshot = "raft.snapshot"
 )
 
 type statusResponse struct {
@@ -66,14 +66,14 @@ func newReplication(id uuid.UUID, term int, prevIndex int, prevTerm int, items [
 // Request votes ONLY come from members who are candidates.
 type voteRequest struct {
 	Id          uuid.UUID `json:"id"`
-	Term        int       `json:"term"`
-	MaxLogIndex int       `json:"max_log_index"`
-	MaxLogTerm  int       `json:"max_log_term"`
+	Term        int64     `json:"term"`
+	MaxLogIndex int64     `json:"max_log_index"`
+	MaxLogTerm  int64     `json:"max_log_term"`
 }
 
 type voteResponse struct {
-	Term    int  `json:"term"`
-	Granted bool `json:"granted"`
+	Term    int64 `json:"term"`
+	Granted bool  `json:"granted"`
 }
 
 // Client append request.  Requests are put onto the internal member
@@ -87,21 +87,21 @@ type appendEventRequest struct {
 
 // append event response type.
 type appendEventResponse struct {
-	Index int `json:"index"`
-	Term  int `json:"term"`
+	Index int64 `json:"index"`
+	Term  int64 `json:"term"`
 }
 
 type installSnapshotRequest struct {
 	LeaderId    uuid.UUID `json:"leader_id"`
-	Term        int       `json:"term"`
+	Term        int64     `json:"term"`
 	Config      Config    `json:"config"`
-	Size        int       `json:"size"`
-	MaxIndex    int       `json:"max_index"`
-	MaxTerm     int       `json:"max_term"`
-	BatchOffset int       `json:"batch_offset"`
+	Size        int64     `json:"size"`
+	MaxIndex    int64     `json:"max_index"`
+	MaxTerm     int64     `json:"max_term"`
+	BatchOffset int64     `json:"batch_offset"`
 	Batch       []Event   `json:"batch"`
 }
 
 type installSnapshotResponse struct {
-	Term int `json:"term"`
+	Term int64 `json:"term"`
 }

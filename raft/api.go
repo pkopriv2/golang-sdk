@@ -217,6 +217,11 @@ type Config struct {
 	Peers Peers `json:"peers"`
 }
 
+func parseConfig(dec enc.Decoder, data []byte) (ret Config, err error) {
+	err = dec.DecodeBinary(data, &ret)
+	return
+}
+
 // A host is a member of a cluster that is actively participating in log replication.
 type Host interface {
 	io.Closer
@@ -240,20 +245,20 @@ type Host interface {
 type Log interface {
 
 	// Returns the index of the maximum inserted item in the local log.
-	Head() int
+	Head() int64
 
 	// Returns the index of the maximum committed item in the local log.
-	Committed() int
+	Committed() int64
 
 	// Returns the latest snaphot and the maximum index that the stream represents.
-	Snapshot() (int, EventStream, error)
+	Snapshot() (int64, EventStream, error)
 
 	// Listen generates a stream of committed log entries starting at and
 	// including the start index.
 	//
 	// This listener guarantees that entries are delivered with at-least-once
 	// semantics.
-	Listen(start int, buf int) (Listener, error)
+	Listen(start int64, buf int64) (Listener, error)
 
 	// Append appends and commits the event to the log.
 	//
@@ -279,7 +284,7 @@ type Log interface {
 	// Concurrent compactions are possible, however, an invariant of the log
 	// is that it must always progress.  Therefore, an older snapshot cannot
 	// usurp a newer one.
-	Compact(until int, snapshot <-chan []byte, size int) error
+	Compact(until int64, snapshot <-chan Event) error
 }
 
 type Listener interface {
@@ -320,13 +325,13 @@ type Sync interface {
 
 	// Applied tells the synchronizer that the index (and everything that preceded)
 	// it has been applied to the state machine.
-	Ack(index int)
+	Ack(index int64)
 
 	// Returns the current read-barrier for the cluster.
-	Barrier(cancel <-chan struct{}) (int, error)
+	Barrier(cancel <-chan struct{}) (int64, error)
 
 	// Sync waits for the local machine to be caught up to the barrier.
-	Sync(cancel <-chan struct{}, index int) error
+	Sync(cancel <-chan struct{}, index int64) error
 }
 
 func min(l int64, others ...int64) int64 {

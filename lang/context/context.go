@@ -3,6 +3,9 @@ package context
 import (
 	"io"
 	"io/ioutil"
+	"time"
+
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 )
 
 type Context interface {
@@ -39,4 +42,24 @@ func (c *ctx) Logger() Logger {
 
 func (c *ctx) Sub(fmt string, args ...interface{}) Context {
 	return &ctx{logger: c.logger.Fmt(fmt, args...), control: c.control.Sub()}
+}
+
+// FIXME: return the sub control in order to be able to cancel/cleanup
+func NewTimer(ctrl Control, dur time.Duration) Control {
+	sub := ctrl.Sub()
+
+	timer := time.NewTimer(dur)
+	go func() {
+		defer sub.Close()
+
+		select {
+		case <-sub.Closed():
+			return
+		case <-timer.C:
+			sub.Fail(errs.TimeoutError)
+			return
+		}
+	}()
+
+	return sub
 }

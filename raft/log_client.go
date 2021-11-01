@@ -2,14 +2,14 @@ package raft
 
 //type logClient struct {
 //id     uuid.UUID
-//ctx    common.Context
-//ctrl   common.Control
-//logger common.Logger
-//pool   common.ObjectPool // T: *rpcClient
+//ctx    context.Context
+//ctrl   context.Control
+//logger context.Logger
+//pool   context.ObjectPool // T: *rpcClient
 //self   *replica
 //}
 
-//func newLogClient(self *replica, pool common.ObjectPool) *logClient {
+//func newLogClient(self *replica, pool context.ObjectPool) *logClient {
 //ctx := self.Ctx.Sub("LogClient")
 //return &logClient{
 //id:     self.Id,
@@ -65,7 +65,7 @@ package raft
 //func (c *logClient) append(cancel <-chan struct{}, e Event, k Kind) (entry Entry, err error) {
 //raw := c.pool.TakeOrCancel(cancel)
 //if raw == nil {
-//return Entry{}, errors.WithStack(common.CanceledError)
+//return Entry{}, errors.WithStack(context.CanceledError)
 //}
 //defer func() {
 //if err != nil {
@@ -120,7 +120,7 @@ package raft
 //return l.raw.Close()
 //}
 
-//func (l *logClientListener) Ctrl() common.Control {
+//func (l *logClientListener) Ctrl() context.Control {
 //return l.raw.Ctrl()
 //}
 

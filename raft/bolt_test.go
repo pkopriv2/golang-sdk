@@ -4,7 +4,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/boltdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	uuid "github.com/satori/go.uuid"
@@ -65,7 +64,7 @@ func TestBoltLog_CreateSnapshot_Events(t *testing.T) {
 	s, err := createBoltSnapshot(db, 1, 1, newEventChannel(expected), Config{})
 	assert.Nil(t, err)
 
-	events, err := s.Scan(0, 1)
+	events, err := s.Scan(0, 2)
 	assert.Nil(t, err)
 	assert.Equal(t, expected, events)
 }
@@ -90,13 +89,13 @@ func TestBoltLog_CreateSnapshot_MultipleWithEvents(t *testing.T) {
 		return
 	}
 
-	events1, err := snapshot1.Scan(0, 1)
+	events1, err := snapshot1.Scan(0, 2)
 	if !assert.Nil(t, err) {
 		return
 	}
 	assert.Equal(t, expected1, events1)
 
-	events2, err := snapshot2.Scan(0, 2)
+	events2, err := snapshot2.Scan(0, 3)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -119,11 +118,8 @@ func TestBoltLog_DeleteSnapshot(t *testing.T) {
 	assert.Nil(t, snapshot.Delete())
 	assert.Nil(t, snapshot.Delete()) // idempotent deletes
 
-	events, err = snapshot.Scan(0, 1)
-	if !assert.Nil(t, err) {
-		return
-	}
-	assert.Equal(t, []Event{}, events)
+	_, err = snapshot.Scan(0, 2)
+	assert.NotNil(t, err)
 }
 
 func TestBoltStore_New_WithConfig(t *testing.T) {
@@ -137,7 +133,7 @@ func TestBoltStore_New_WithConfig(t *testing.T) {
 
 	id := uuid.NewV1()
 
-	log, err := store.New(id, Config{})
+	log, err := store.NewLog(id, Config{})
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -160,7 +156,7 @@ func TestBoltStore_Get_NoExist(t *testing.T) {
 		return
 	}
 
-	log, err := store.Get(uuid.NewV1())
+	log, err := store.GetLog(uuid.NewV1())
 	assert.Nil(t, err)
 	assert.Nil(t, log)
 }
@@ -174,7 +170,7 @@ func TestBoltLog_Create_Empty(t *testing.T) {
 		return
 	}
 
-	log, err := store.New(uuid.NewV1(), Config{})
+	log, err := store.NewLog(uuid.NewV1(), Config{})
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -182,96 +178,86 @@ func TestBoltLog_Create_Empty(t *testing.T) {
 	min, _ := log.(*BoltLog).Min()
 	max, _ := log.(*BoltLog).Max()
 
-	assert.Equal(t, -1, min)
-	assert.Equal(t, -1, max)
+	assert.Equal(t, int64(-1), min)
+	assert.Equal(t, int64(-1), max)
 
-	lastIndex, lastTerm, _ := log.LastIndexAndTerm()
-	assert.Equal(t, -1, lastIndex)
-	assert.Equal(t, -1, lastTerm)
+	lastIndex, lastTerm, err := log.LastIndexAndTerm()
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.Equal(t, int64(-1), lastIndex)
+	assert.Equal(t, int64(-1), lastTerm)
 
 	batch, _ := log.Scan(0, 0)
 	assert.Empty(t, batch)
 
-	_, err = log.Scan(-2, 0)
-	assert.Equal(t, ErrOutOfBounds, errors.Cause(err))
-
 	snapshot, err := log.Snapshot()
-	assert.Equal(t, -1, snapshot.LastIndex())
-	assert.Equal(t, -1, snapshot.LastTerm())
-	assert.Equal(t, 0, snapshot.Size())
-	assert.Equal(t, []byte{}, snapshot.Config())
+	assert.Equal(t, int64(-1), snapshot.LastIndex())
+	assert.Equal(t, int64(-1), snapshot.LastTerm())
+	assert.Equal(t, int64(0), snapshot.Size())
+	assert.Equal(t, Config{}, snapshot.Config())
 }
 
-//func TestBoltLog_Append_Single(t *testing.T) {
-//ctx := context.NewContext(context.NewEmptyConfig())
-//defer ctx.Close()
+func TestBoltLog_Append_Single(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, context.Debug)
+	defer ctx.Close()
 
-//db := OpenTestLogStash(ctx)
-//log, err := createBoltLog(db, uuid.NewV1(), []byte{})
-//assert.Nil(t, err)
+	store, err := NewBoltStore(boltdb.MustOpenRandom(ctx))
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//exp := Entry{Index: 0, Term: 1, Event: Event{0}}
-//item, err := log.Append(exp.Event, exp.Term, exp.Kind)
-//assert.Nil(t, err)
-//assert.Equal(t, exp, item)
+	log, err := store.NewLog(uuid.NewV1(), Config{})
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//batch, err := log.Scan(0, 100)
-//assert.Nil(t, err)
-//assert.Equal(t, []Entry{exp}, batch)
-//}
+	exp := Entry{Index: 0, Term: 1, Payload: []byte{0}}
 
-//func TestBoltLog_Append_Multi(t *testing.T) {
-//ctx := context.NewContext(context.NewEmptyConfig())
-//defer ctx.Close()
+	item, err := log.Append(exp.Payload, exp.Term, exp.Kind)
+	assert.Nil(t, err)
+	assert.Equal(t, exp, item)
 
-//db := OpenTestLogStash(ctx)
-//log, err := createBoltLog(db, uuid.NewV1(), []byte{})
-//assert.Nil(t, err)
+	batch, err := log.Scan(0, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, []Entry{exp}, batch)
+}
 
-//exp1 := Entry{Index: 0, Term: 0, Event: Event{0}}
-//exp2 := Entry{Index: 1, Term: 1, Event: Event{1}}
+func TestBoltLog_Append_Multi(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, context.Debug)
+	defer ctx.Close()
 
-//item1, err := log.Append(exp1.Event, exp1.Term, exp1.Kind)
-//assert.Nil(t, err)
-//item2, err := log.Append(exp2.Event, exp2.Term, exp2.Kind)
-//assert.Nil(t, err)
+	store, err := NewBoltStore(boltdb.MustOpenRandom(ctx))
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//assert.Equal(t, exp1, item1)
-//assert.Equal(t, exp2, item2)
+	log, err := store.NewLog(uuid.NewV1(), Config{})
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//batch, err := log.Scan(0, 100)
-//assert.Nil(t, err)
-//assert.Equal(t, []Entry{exp1, exp2}, batch)
-//}
+	exp1 := Entry{Index: 0, Term: 0, Payload: Event{0}}
+	exp2 := Entry{Index: 1, Term: 1, Payload: Event{1}}
 
-//func TestBoltLog_Insert_OutOfBounds(t *testing.T) {
-//ctx := context.NewContext(context.NewEmptyConfig())
-//defer ctx.Close()
+	item1, err := log.Append(exp1.Payload, exp1.Term, exp1.Kind)
+	if !assert.Nil(t, err) {
+		return
+	}
+	item2, err := log.Append(exp2.Payload, exp2.Term, exp2.Kind)
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//db := OpenTestLogStash(ctx)
-//log, err := createBoltLog(db, uuid.NewV1(), []byte{})
-//assert.Nil(t, err)
+	assert.Equal(t, exp1, item1)
+	assert.Equal(t, exp2, item2)
 
-//err = log.Insert([]Entry{Entry{Index: 1, Term: 0, Event: Event{0}}})
-//assert.Equal(t, OutOfBoundsError, errors.Cause(err))
-//}
-
-//func TestBoltLog_Insert_Multi(t *testing.T) {
-//ctx := context.NewContext(context.NewEmptyConfig())
-//defer ctx.Close()
-
-//db := OpenTestLogStash(ctx)
-//log, err := createBoltLog(db, uuid.NewV1(), []byte{})
-//assert.Nil(t, err)
-
-//exp1 := Entry{Index: 0, Term: 0, Event: Event{0}}
-//exp2 := Entry{Index: 1, Term: 1, Event: Event{1}}
-//assert.Nil(t, log.Insert([]Entry{exp1, exp2}))
-
-//batch, err := log.Scan(0, 100)
-//assert.Nil(t, err)
-//assert.Equal(t, []Entry{exp1, exp2}, batch)
-//}
+	batch, err := log.Scan(0, 2)
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.Equal(t, []Entry{exp1, exp2}, batch)
+}
 
 //func TestBoltLog_Truncate_Empty(t *testing.T) {
 //ctx := context.NewContext(context.NewEmptyConfig())

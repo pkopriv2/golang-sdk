@@ -9,7 +9,7 @@ import (
 // will be looking for.  Therefore, do NOT decorate any errors that are the result
 // of the StoredLog operation.
 
-type eventLog struct {
+type entryLog struct {
 	ctx    context.Context
 	ctrl   context.Control
 	logger context.Logger
@@ -18,7 +18,7 @@ type eventLog struct {
 	commit *ref
 }
 
-func openEventLog(ctx context.Context, log StoredLog) (*eventLog, error) {
+func openEntryLog(ctx context.Context, log StoredLog) (*entryLog, error) {
 	head, _, err := log.LastIndexAndTerm()
 	if err != nil {
 		return nil, errors.Wrapf(err, "Unable to retrieve head position for segment [%v]", log.Id())
@@ -38,7 +38,7 @@ func openEventLog(ctx context.Context, log StoredLog) (*eventLog, error) {
 		commitRef.Close()
 	})
 
-	return &eventLog{
+	return &entryLog{
 		ctx:    ctx,
 		ctrl:   ctx.Control(),
 		logger: ctx.Logger(),
@@ -47,19 +47,19 @@ func openEventLog(ctx context.Context, log StoredLog) (*eventLog, error) {
 		commit: commitRef}, nil
 }
 
-func (e *eventLog) Close() error {
+func (e *entryLog) Close() error {
 	return e.ctrl.Close()
 }
 
-func (e *eventLog) Head() int64 {
+func (e *entryLog) Head() int64 {
 	return e.head.Get()
 }
 
-func (e *eventLog) Committed() (pos int64) {
+func (e *entryLog) Committed() (pos int64) {
 	return e.commit.Get()
 }
 
-func (e *eventLog) Commit(pos int64) (actual int64, err error) {
+func (e *entryLog) Commit(pos int64) (actual int64, err error) {
 	var head int64
 	actual = e.commit.Update(func(cur int64) int64 {
 		head, _, err = e.raw.LastIndexAndTerm()
@@ -72,15 +72,15 @@ func (e *eventLog) Commit(pos int64) (actual int64, err error) {
 	return
 }
 
-func (e *eventLog) Get(index int64) (Entry, bool, error) {
+func (e *entryLog) Get(index int64) (Entry, bool, error) {
 	return e.raw.Get(index)
 }
 
-func (e *eventLog) Scan(start int64, end int64) ([]Entry, error) {
+func (e *entryLog) Scan(start int64, end int64) ([]Entry, error) {
 	return e.raw.Scan(start, end)
 }
 
-func (e *eventLog) Append(evt Event, term int64, k Kind) (Entry, error) {
+func (e *entryLog) Append(evt Event, term int64, k Kind) (Entry, error) {
 	item, err := e.raw.Append(evt, term, k)
 	if err != nil {
 		return item, err
@@ -93,7 +93,7 @@ func (e *eventLog) Append(evt Event, term int64, k Kind) (Entry, error) {
 	return item, nil
 }
 
-func (e *eventLog) Insert(batch []Entry) error {
+func (e *entryLog) Insert(batch []Entry) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -108,28 +108,28 @@ func (e *eventLog) Insert(batch []Entry) error {
 	return nil
 }
 
-//func (e *eventLog) Truncate(from int64) (err error) {
-//e.head.Update(func(cur int64) int64 {
-//if from > cur {
-//return cur
-//}
+func (e *entryLog) TrimRight(start int64) (err error) {
+	e.head.Update(func(cur int64) int64 {
+		if start > cur {
+			return cur
+		}
 
-//err = e.raw.Truncate(from)
-//if err != nil {
-//return cur
-//} else {
-//return from - 1
-//}
-//})
-//return
-//}
+		err = e.raw.TrimRight(start)
+		if err != nil {
+			return cur
+		} else {
+			return start - 1
+		}
+	})
+	return
+}
 
-func (e *eventLog) Snapshot() (StoredSnapshot, error) {
+func (e *entryLog) Snapshot() (StoredSnapshot, error) {
 	return e.raw.Snapshot()
 }
 
 // only called from followers.
-func (e *eventLog) Assert(index int64, term int64) (bool, error) {
+func (e *entryLog) Assert(index int64, term int64) (bool, error) {
 	item, ok, err := e.Get(index)
 	if err != nil {
 		return false, err
@@ -147,11 +147,11 @@ func (e *eventLog) Assert(index int64, term int64) (bool, error) {
 	return s.LastIndex() == index && s.LastTerm() == term, nil
 }
 
-func (e *eventLog) NewSnapshot(lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
+func (e *entryLog) NewSnapshot(lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
 	return e.raw.Store().NewSnapshot(lastIndex, lastTerm, ch, config)
 }
 
-func (e *eventLog) Install(snapshot StoredSnapshot) error {
+func (e *entryLog) Install(snapshot StoredSnapshot) error {
 	err := e.raw.Install(snapshot)
 	if err != nil {
 		return err
@@ -169,7 +169,7 @@ func (e *eventLog) Install(snapshot StoredSnapshot) error {
 	return err
 }
 
-func (e *eventLog) Compact(until int64, data <-chan Event, config Config) error {
+func (e *entryLog) Compact(until int64, data <-chan Event, config Config) error {
 	item, ok, err := e.Get(until)
 	if err != nil || !ok {
 		return errors.Wrapf(ErrCompaction, "Cannot compact until [%v].  It doesn't exist", until)
@@ -183,11 +183,11 @@ func (e *eventLog) Compact(until int64, data <-chan Event, config Config) error 
 	return e.raw.Install(snapshot)
 }
 
-func (e *eventLog) LastIndexAndTerm() (int64, int64, error) {
+func (e *entryLog) LastIndexAndTerm() (int64, int64, error) {
 	return e.raw.LastIndexAndTerm()
 }
 
-func (e *eventLog) ListenCommits(start int64, buf int64) (Listener, error) {
+func (e *entryLog) ListenCommits(start int64, buf int64) (Listener, error) {
 	if e.ctrl.IsClosed() {
 		return nil, errors.WithStack(ClosedError)
 	}
@@ -195,7 +195,7 @@ func (e *eventLog) ListenCommits(start int64, buf int64) (Listener, error) {
 	return newRefListener(e, e.commit, start, buf), nil
 }
 
-func (e *eventLog) ListenAppends(start int64, buf int64) (Listener, error) {
+func (e *entryLog) ListenAppends(start int64, buf int64) (Listener, error) {
 	if e.ctrl.IsClosed() {
 		return nil, errors.WithStack(ClosedError)
 	}
@@ -222,7 +222,7 @@ func (s *snapshot) Events(cancel <-chan struct{}) <-chan Event {
 	go func() {
 		size := s.raw.Size()
 		for cur := int64(0); cur < size; {
-			batch, err := s.raw.Scan(cur, min(size, cur+256))
+			batch, err := s.raw.Scan(cur, min(size+1, cur+256))
 			if err != nil {
 				return
 			}
@@ -244,7 +244,7 @@ func (s *snapshot) Events(cancel <-chan struct{}) <-chan Event {
 }
 
 type refListener struct {
-	log    *eventLog
+	log    *entryLog
 	pos    *ref
 	buf    int64
 	ch     chan Entry
@@ -252,7 +252,7 @@ type refListener struct {
 	logger context.Logger
 }
 
-func newRefListener(log *eventLog, pos *ref, from int64, buf int64) *refListener {
+func newRefListener(log *entryLog, pos *ref, from int64, buf int64) *refListener {
 	ctx := log.ctx.Sub("Listener")
 
 	l := &refListener{
@@ -284,13 +284,13 @@ func (l *refListener) start(from int64) {
 				return
 			}
 
-			for cur <= next {
+			for cur < next {
 				if l.ctrl.IsClosed() || l.log.ctrl.IsClosed() {
 					return
 				}
 
 				// scan the next batch
-				batch, err := l.log.Scan(cur, min(next, cur+l.buf))
+				batch, err := l.log.Scan(cur, min(next+1, cur+l.buf))
 				if err != nil {
 					l.ctrl.Fail(err)
 					return
