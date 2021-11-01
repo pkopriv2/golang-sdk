@@ -42,11 +42,6 @@ type boltSnapshotSummary struct {
 	Config   Config    `json:"config"`
 }
 
-func (b boltSnapshotSummary) Encode(enc enc.Encoder) (ret []byte, err error) {
-	err = enc.EncodeBinary(b, &ret)
-	return
-}
-
 func getSnapshotSummary(tx *bolt.Tx, snapshotId uuid.UUID) (ret boltSnapshotSummary, ok bool, err error) {
 	raw := tx.Bucket(snapshotsBucket).Get(bin.UUID(snapshotId))
 	if raw == nil {

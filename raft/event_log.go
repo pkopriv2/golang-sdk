@@ -220,8 +220,9 @@ func (s *snapshot) Config() Config {
 func (s *snapshot) Events(cancel <-chan struct{}) <-chan Event {
 	ch := make(chan Event)
 	go func() {
-		for cur := int64(0); cur < s.raw.Size(); {
-			batch, err := s.raw.Scan(cur, min(cur, cur+256))
+		size := s.raw.Size()
+		for cur := int64(0); cur < size; {
+			batch, err := s.raw.Scan(cur, min(size, cur+256))
 			if err != nil {
 				return
 			}

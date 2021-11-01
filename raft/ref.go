@@ -6,7 +6,7 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/context"
 )
 
-// A simply notifying int64eger value.
+// A simply notifying integer value.
 
 type ref struct {
 	val  int64

@@ -26,19 +26,17 @@ func initBoltTermBucket(tx *bolt.Tx) error {
 }
 
 type termStore struct {
-	db  *bolt.DB
-	enc enc.EncoderDecoder
+	db *bolt.DB
 }
 
-func openTermStore(db *bolt.DB, e enc.EncoderDecoder) (*termStore, error) {
+func openTermStore(db *bolt.DB) (*termStore, error) {
 	err := db.Update(func(tx *bolt.Tx) error {
 		return initBoltTermBucket(tx)
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	return &termStore{db, e}, nil
+	return &termStore{db}, nil
 }
 
 func (t *termStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
@@ -72,7 +70,7 @@ func (t *termStore) Get(id uuid.UUID) (term term, ok bool, err error) {
 		return nil
 	})
 
-	if err = t.enc.DecodeBinary(bytes, &term); err != nil {
+	if err = enc.Json.DecodeBinary(bytes, &term); err != nil {
 		return
 	}
 
@@ -82,7 +80,7 @@ func (t *termStore) Get(id uuid.UUID) (term term, ok bool, err error) {
 
 func (t *termStore) Save(id uuid.UUID, tm term) error {
 	var bytes []byte
-	if err := t.enc.EncodeBinary(tm, &bytes); err != nil {
+	if err := enc.Json.EncodeBinary(tm, &bytes); err != nil {
 		return err
 	}
 	return t.db.Update(func(tx *bolt.Tx) error {
