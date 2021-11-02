@@ -1,14 +1,24 @@
 package raft
 
 import (
+	"path"
 	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/net"
+	uuid "github.com/satori/go.uuid"
+	"github.com/spf13/afero"
 )
 
+const (
+	DefaultStoragePath = "/var/raft/raft.db"
+)
+
+type Option func(*Options)
+
 type Options struct {
+	StoragePath     string
 	Network         net.Network
 	DialTimeout     time.Duration
 	ReadTimeout     time.Duration
@@ -18,7 +28,7 @@ type Options struct {
 	MaxConns        int
 	Encoder         enc.EncoderDecoder
 	LogStorage      func() (LogStore, error)
-	TermStorage     func() (*termStore, error)
+	TermStorage     func() (*TermStore, error)
 }
 
 func (o Options) Update(fns ...func(*Options)) (ret Options) {
@@ -29,17 +39,9 @@ func (o Options) Update(fns ...func(*Options)) (ret Options) {
 	return
 }
 
-// This is wrong! Need to share boltdb instance so can't create here!
-func WithBoltStore(db *bolt.DB) func() (LogStore, error) {
-	return func() (LogStore, error) {
-		return NewBoltStore(db)
-	}
-}
-
-type Option func(*Options)
-
 func buildOptions(fns ...Option) (ret Options) {
 	ret = Options{
+		StoragePath:     DefaultStoragePath,
 		Network:         net.NewTCP4Network(),
 		DialTimeout:     30 * time.Second,
 		ReadTimeout:     30 * time.Second,
@@ -53,6 +55,20 @@ func buildOptions(fns ...Option) (ret Options) {
 		fn(&ret)
 	}
 	return
+}
+
+func WithRandomStoragePath() Option {
+	return func(o *Options) {
+		o.StoragePath = path.Join(
+			afero.GetTempDir(afero.NewOsFs(),
+				path.Join("raft", uuid.NewV1().String())), "raft.db")
+	}
+}
+
+func WithStoragePath(path string) Option {
+	return func(o *Options) {
+		o.StoragePath = path
+	}
 }
 
 func WithDialTimeout(timeout time.Duration) Option {
@@ -76,5 +92,21 @@ func WithSendTimeout(timeout time.Duration) Option {
 func WithNumWorkers(num int) Option {
 	return func(o *Options) {
 		o.Workers = num
+	}
+}
+
+func WithBoltLogStore(db *bolt.DB) Option {
+	return func(o *Options) {
+		o.LogStorage = func() (LogStore, error) {
+			return NewBoltStore(db)
+		}
+	}
+}
+
+func WithBoltTermStore(db *bolt.DB) Option {
+	return func(o *Options) {
+		o.TermStorage = func() (*TermStore, error) {
+			return openTermStore(db)
+		}
 	}
 }

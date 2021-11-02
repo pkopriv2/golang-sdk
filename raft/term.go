@@ -25,21 +25,21 @@ func initBoltTermBucket(tx *bolt.Tx) error {
 	return errs.Or(e1, e2)
 }
 
-type termStore struct {
+type TermStore struct {
 	db *bolt.DB
 }
 
-func openTermStore(db *bolt.DB) (*termStore, error) {
+func openTermStore(db *bolt.DB) (*TermStore, error) {
 	err := db.Update(func(tx *bolt.Tx) error {
 		return initBoltTermBucket(tx)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &termStore{db}, nil
+	return &TermStore{db}, nil
 }
 
-func (t *termStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
+func (t *TermStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
 	err = t.db.View(func(tx *bolt.Tx) (err error) {
 		bytes := tx.Bucket(termIdBucket).Get([]byte(addr))
 		if bytes == nil {
@@ -57,13 +57,13 @@ func (t *termStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
 	return
 }
 
-func (t *termStore) SetId(addr string, id uuid.UUID) error {
+func (t *TermStore) SetId(addr string, id uuid.UUID) error {
 	return t.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket(termIdBucket).Put([]byte(addr), id.Bytes())
 	})
 }
 
-func (t *termStore) Get(id uuid.UUID) (term term, ok bool, err error) {
+func (t *TermStore) Get(id uuid.UUID) (term term, ok bool, err error) {
 	var bytes []byte
 	err = t.db.View(func(tx *bolt.Tx) error {
 		bytes = tx.Bucket(termBucket).Get(id.Bytes())
@@ -78,7 +78,7 @@ func (t *termStore) Get(id uuid.UUID) (term term, ok bool, err error) {
 	return
 }
 
-func (t *termStore) Save(id uuid.UUID, tm term) error {
+func (t *TermStore) Save(id uuid.UUID, tm term) error {
 	var bytes []byte
 	if err := enc.Json.EncodeBinary(tm, &bytes); err != nil {
 		return err

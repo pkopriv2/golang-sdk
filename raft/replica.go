@@ -41,7 +41,7 @@ type replica struct {
 	Log *entryLog
 
 	// the durable term store.
-	Terms *termStore
+	Terms *TermStore
 
 	// data lock (currently using very coarse lock)
 	lock sync.RWMutex
@@ -77,7 +77,7 @@ type replica struct {
 	RosterUpdates chan *chans.Request
 }
 
-func newReplica(ctx context.Context, store LogStore, termStore *termStore, addr string, opts Options) (*replica, error) {
+func newReplica(ctx context.Context, store LogStore, termStore *TermStore, addr string, opts Options) (*replica, error) {
 
 	id, err := getOrCreateReplicaId(termStore, addr)
 	if err != nil {
@@ -337,7 +337,7 @@ func (r *replica) LocalAppend(event appendEventRequest) (Entry, error) {
 	return val.(Entry), nil
 }
 
-func getOrCreateReplicaId(store *termStore, addr string) (uuid.UUID, error) {
+func getOrCreateReplicaId(store *TermStore, addr string) (uuid.UUID, error) {
 	id, ok, err := store.GetId(addr)
 	if err != nil {
 		return uuid.UUID{}, errors.Wrapf(err, "Error retrieving id for address [%v]", addr)

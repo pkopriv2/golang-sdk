@@ -1,28 +1,38 @@
 package raft
 
-//func TestHost_Close(t *testing.T) {
-//ctx := common.NewEmptyContext()
+import (
+	"os"
+	"runtime"
+	"runtime/pprof"
+	"testing"
+	"time"
 
-//before := runtime.NumGoroutine()
-//pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
+	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/stretchr/testify/assert"
+)
 
-//stg, err := TestStorage(ctx)
-//assert.Nil(t, err)
+func TestHost_Close(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, context.Debug)
 
-//host, err := Start(ctx, ":0", stg)
-//assert.Nil(t, err)
+	before := runtime.NumGoroutine()
+	pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
 
-//time.Sleep(5 * time.Second)
-//assert.Nil(t, host.Close())
-//time.Sleep(5 * time.Second)
+	host, err := Start(ctx, ":0", WithRandomStoragePath())
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//runtime.GC()
-//pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
-//assert.True(t, before <= runtime.NumGoroutine())
-//}
+	time.Sleep(5 * time.Second)
+	assert.Nil(t, host.Close())
+	time.Sleep(5 * time.Second)
+
+	runtime.GC()
+	pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
+	assert.True(t, before <= runtime.NumGoroutine())
+}
 
 //func TestHost_ReadSnapshot_Empty(t *testing.T) {
-//ctx := common.NewEmptyContext()
+//ctx := context.NewEmptyContext()
 //defer ctx.Close()
 
 //host, err := StartTestHost(ctx)
@@ -43,7 +53,7 @@ package raft
 //}
 
 //func TestHost_SyncBarrier_Empty(t *testing.T) {
-//ctx := common.NewEmptyContext()
+//ctx := context.NewEmptyContext()
 //defer ctx.Close()
 
 //timer := ctx.Timer(30*time.Second)
@@ -61,10 +71,10 @@ package raft
 //}
 
 //func TestHost_ReadSnapshot(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
+//conf := context.NewConfig(map[string]interface{}{
 //Config.BaseElectionTimeout: 500 * time.Millisecond,
 //})
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //timer := ctx.Timer(30*time.Second)
@@ -92,7 +102,7 @@ package raft
 //}
 
 //func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
-//ctx := common.NewContext(common.NewEmptyConfig())
+//ctx := context.NewContext(context.NewEmptyConfig())
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 2)
@@ -107,7 +117,7 @@ package raft
 //}
 
 //func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
-//ctx := common.NewContext(common.NewEmptyConfig())
+//ctx := context.NewContext(context.NewEmptyConfig())
 //defer ctx.Close()
 //cluster, err := StartTestCluster(ctx, 3)
 //assert.Nil(t, err)
@@ -121,7 +131,7 @@ package raft
 //}
 
 //func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
-//ctx := common.NewContext(common.NewEmptyConfig())
+//ctx := context.NewContext(context.NewEmptyConfig())
 //defer ctx.Close()
 //cluster, err := StartTestCluster(ctx, 5)
 //assert.Nil(t, err)
@@ -135,7 +145,7 @@ package raft
 //}
 
 //func TestHost_Cluster_ConvergeSevenPeers(t *testing.T) {
-//ctx := common.NewContext(common.NewEmptyConfig())
+//ctx := context.NewContext(context.NewEmptyConfig())
 //defer ctx.Close()
 //cluster, err := StartTestCluster(ctx, 7)
 //assert.Nil(t, err)
@@ -149,7 +159,7 @@ package raft
 //}
 
 //func TestHost_Cluster_Close(t *testing.T) {
-//ctx := common.NewContext(common.NewEmptyConfig())
+//ctx := context.NewContext(context.NewEmptyConfig())
 
 //before := runtime.NumGoroutine()
 //pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
@@ -176,10 +186,10 @@ package raft
 //}
 
 //func TestHost_Cluster_Leader_Failure(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(common.Debug),
+//conf := context.NewConfig(map[string]interface{}{
+//"bourne.log.level": int(context.Debug),
 //})
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 3)
@@ -204,7 +214,7 @@ package raft
 //}
 
 //func TestHost_Cluster_Leader_Leave(t *testing.T) {
-//ctx := common.NewContext(common.NewEmptyConfig())
+//ctx := context.NewContext(context.NewEmptyConfig())
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 3)
@@ -231,11 +241,11 @@ package raft
 //}
 
 //func TestHost_Cluster_Leader_Append_Single(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(common.Debug),
+//conf := context.NewConfig(map[string]interface{}{
+//"bourne.log.level": int(context.Debug),
 //})
 
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 3)
@@ -252,15 +262,15 @@ package raft
 //assert.Nil(t, err)
 
 //SyncMajority(timer.Closed(), cluster, SyncTo(item.Index))
-//assert.False(t, common.IsCanceled(timer.Closed()))
+//assert.False(t, context.IsCanceled(timer.Closed()))
 //}
 
 //func TestHost_Cluster_Leader_Append_Multi(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(common.Debug),
+//conf := context.NewConfig(map[string]interface{}{
+//"bourne.log.level": int(context.Debug),
 //})
 
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 3)
@@ -288,15 +298,15 @@ package raft
 //}
 
 //SyncMajority(timer.Closed(), cluster, SyncTo(numThreads*numItemsPerThread-1))
-//assert.False(t, common.IsCanceled(timer.Closed()))
+//assert.False(t, context.IsCanceled(timer.Closed()))
 //}
 
 //func TestHost_Cluster_Leader_Append_WithCompactions(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(common.Debug),
+//conf := context.NewConfig(map[string]interface{}{
+//"bourne.log.level": int(context.Debug),
 //})
 
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 3)
@@ -319,7 +329,7 @@ package raft
 
 //go func() {
 //for range time.NewTicker(100 * time.Millisecond).C {
-//if common.IsClosed(ctx.Control().Closed()) {
+//if context.IsClosed(ctx.Control().Closed()) {
 //return
 //}
 
@@ -345,15 +355,15 @@ package raft
 //}
 
 //SyncMajority(timer.Closed(), cluster, SyncTo(numThreads*numItemsPerThread-1))
-//assert.False(t, common.IsCanceled(timer.Closed()))
+//assert.False(t, context.IsCanceled(timer.Closed()))
 //}
 
 //func TestHost_Cluster_Append_Single(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(common.Debug),
+//conf := context.NewConfig(map[string]interface{}{
+//"bourne.log.level": int(context.Debug),
 //})
 
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 3)
@@ -373,15 +383,15 @@ package raft
 //assert.Nil(t, err)
 
 //SyncMajority(timer.Closed(), cluster, SyncTo(item.Index))
-//assert.False(t, common.IsCanceled(timer.Closed()))
+//assert.False(t, context.IsCanceled(timer.Closed()))
 //}
 
 //func TestCluster_Append_Multi(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(common.Debug),
+//conf := context.NewConfig(map[string]interface{}{
+//"bourne.log.level": int(context.Debug),
 //})
 
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 3)
@@ -412,15 +422,15 @@ package raft
 //}
 
 //SyncMajority(timer.Closed(), cluster, SyncTo(numThreads*numItemsPerThread-1))
-//assert.False(t, common.IsCanceled(timer.Closed()))
+//assert.False(t, context.IsCanceled(timer.Closed()))
 //}
 
 //func TestHost_Cluster_Barrier(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(common.Debug),
+//conf := context.NewConfig(map[string]interface{}{
+//"bourne.log.level": int(context.Debug),
 //})
 
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //cluster, err := StartTestCluster(ctx, 3)
@@ -452,7 +462,7 @@ package raft
 //}
 
 //max.Update(func(cur uint64) uint64 {
-//return uint64(common.Max(int(cur), item.Index))
+//return uint64(context.Max(int(cur), item.Index))
 //})
 //}
 //}()
@@ -470,14 +480,14 @@ package raft
 //}()
 
 //SyncMajority(timer.Closed(), cluster, SyncTo(numThreads*numItemsPerThread-1))
-//assert.False(t, common.IsCanceled(timer.Closed()))
+//assert.False(t, context.IsCanceled(timer.Closed()))
 //}
 
 //func TestHost_Cluster_Join_Busy(t *testing.T) {
-//conf := common.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(common.Debug),
+//conf := context.NewConfig(map[string]interface{}{
+//"bourne.log.level": int(context.Debug),
 //})
-//ctx := common.NewContext(conf)
+//ctx := context.NewContext(conf)
 //defer ctx.Close()
 
 //timer := ctx.Timer(300*time.Second)
@@ -531,11 +541,11 @@ package raft
 //// }
 ////
 //// func Benchmark_Append_3_10_10(t *testing.B) {
-//// conf := common.NewConfig(map[string]interface{}{
-//// "bourne.log.level": int(common.Debug),
+//// conf := context.NewConfig(map[string]interface{}{
+//// "bourne.log.level": int(context.Debug),
 //// })
 ////
-//// ctx := common.NewContext(conf)
+//// ctx := context.NewContext(conf)
 //// defer ctx.Close()
 ////
 //// cluster, err := TestCluster(ctx, 3)

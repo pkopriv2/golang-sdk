@@ -116,6 +116,7 @@ import (
 	"math"
 
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/boltdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	uuid "github.com/satori/go.uuid"
@@ -134,7 +135,17 @@ var (
 func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 	opts := buildOptions(fns...)
 
-	host, err := newHost(ctx, addr, opts)
+	db, err := boltdb.Open(ctx, opts.StoragePath)
+	if err != nil {
+		return nil, errors.Wrap(err, "Unable to open bolt instance")
+	}
+	ctx.Control().Defer(func(error) {
+		db.Close()
+	})
+
+	host, err := newHost(ctx, addr, opts.Update(
+		WithBoltLogStore(db),
+		WithBoltTermStore(db)))
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to initialize host")
 	}
@@ -146,10 +157,17 @@ func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host, error) {
 	opts := buildOptions(fns...)
 
-	host, err := newHost(ctx, addr, opts)
+	db, err := boltdb.Open(ctx, opts.StoragePath)
 	if err != nil {
-		return nil, errors.Wrap(err, "Unable to initialize host")
+		return nil, errors.Wrap(err, "Unable to open bolt instance")
 	}
+	ctx.Control().Defer(func(error) {
+		db.Close()
+	})
+
+	host, err := newHost(ctx, addr, opts.Update(
+		WithBoltLogStore(db),
+		WithBoltTermStore(db)))
 
 	// FIXME: use all peer addrs.
 	return host, host.Join(peers[0])

@@ -6,7 +6,6 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 	"github.com/pkopriv2/golang-sdk/rpc"
 	uuid "github.com/satori/go.uuid"
@@ -26,7 +25,7 @@ type host struct {
 }
 
 func newHost(ctx context.Context, addr string, opts Options) (h *host, err error) {
-	ctx = ctx.Sub("Raft")
+	ctx = ctx.Sub("RaftHost")
 	defer func() {
 		if err != nil {
 			ctx.Control().Fail(err)
@@ -186,7 +185,11 @@ func (h *host) Leave() error {
 }
 
 func (h *host) tryJoin(addr string) error {
-	cl, err := dialRpcClient(h.replica.Options.Network, h.replica.Options.ReadTimeout, addr, h.replica.Options.Encoder)
+	cl, err := dialRpcClient(
+		h.replica.Options.Network,
+		h.replica.Options.ReadTimeout,
+		addr,
+		h.replica.Options.Encoder)
 	if err != nil {
 		return errors.Wrapf(err, "Error connecting to peer [%v]", addr)
 	}
@@ -300,7 +303,7 @@ func (c *logClient) append(cancel <-chan struct{}, payload []byte, kind Kind) (e
 	for {
 		raw := c.leaderPool.TakeOrCancel(cancel)
 		if raw == nil {
-			err = errs.CanceledError
+			err = ErrCanceled
 			return
 		}
 
