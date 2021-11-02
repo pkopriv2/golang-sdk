@@ -19,6 +19,7 @@ type Option func(*Options)
 
 type Options struct {
 	StoragePath     string
+	StorageDelete   bool
 	Network         net.Network
 	DialTimeout     time.Duration
 	ReadTimeout     time.Duration
@@ -42,6 +43,7 @@ func (o Options) Update(fns ...func(*Options)) (ret Options) {
 func buildOptions(fns ...Option) (ret Options) {
 	ret = Options{
 		StoragePath:     DefaultStoragePath,
+		StorageDelete:   false,
 		Network:         net.NewTCP4Network(),
 		DialTimeout:     30 * time.Second,
 		ReadTimeout:     30 * time.Second,
@@ -49,7 +51,7 @@ func buildOptions(fns ...Option) (ret Options) {
 		ElectionTimeout: 30 * time.Second,
 		Workers:         10,
 		MaxConns:        5,
-		Encoder:         enc.Json,
+		Encoder:         enc.Gob,
 	}
 	for _, fn := range fns {
 		fn(&ret)
@@ -57,8 +59,9 @@ func buildOptions(fns ...Option) (ret Options) {
 	return
 }
 
-func WithRandomStoragePath() Option {
+func WithTmpStorage() Option {
 	return func(o *Options) {
+		o.StorageDelete = true
 		o.StoragePath = path.Join(
 			afero.GetTempDir(afero.NewOsFs(),
 				path.Join("raft", uuid.NewV1().String())), "raft.db")

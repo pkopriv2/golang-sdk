@@ -33,7 +33,7 @@ func (c *follower) start() {
 	// Proxy routine. (Out of band to allow replication requests through faster)
 	go func() {
 		defer c.ctrl.Close()
-		for {
+		for !c.ctrl.IsClosed() {
 			select {
 			case <-c.ctrl.Closed():
 				return
@@ -52,8 +52,12 @@ func (c *follower) start() {
 	// Main routine
 	go func() {
 		defer c.ctrl.Close()
+		c.ctrl.Defer(func(error) {
+			c.logger.Info("Shutting down")
+		})
 
 		timer := time.NewTimer(c.replica.ElectionTimeout)
+		defer timer.Stop()
 		for !c.ctrl.IsClosed() {
 			select {
 			case <-c.ctrl.Closed():
@@ -100,6 +104,8 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 		req.Ack(installSnapshotResponse{Term: c.term.Num, Success: false})
 		return
 	}
+
+	req.Ack(installSnapshotResponse{Term: segment.Term, Success: true})
 
 	//if data == nil {
 	//data, done = c.startSnapshotStream(segment)
@@ -164,15 +170,15 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 			c.logger.Debug("Voting for candidate [%v]", vote.Id)
 			req.Ack(voteResponse{Term: vote.Term, Granted: true})
 			c.replica.SetTerm(vote.Term, nil, &vote.Id) // correct?
-			becomeFollower(c.replica)
 			c.ctrl.Close()
+			becomeFollower(c.replica)
 			return
 		}
 
 		c.logger.Debug("Rejecting candidate vote [%v]", vote.Id)
 		req.Ack(voteResponse{Term: vote.Term, Granted: false})
-		becomeCandidate(c.replica)
 		c.ctrl.Close()
+		becomeCandidate(c.replica)
 		return
 	}
 
@@ -181,16 +187,16 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 		c.logger.Debug("Voting for candidate [%v]", vote.Id)
 		req.Ack(voteResponse{Term: vote.Term, Granted: true})
 		c.replica.SetTerm(vote.Term, nil, &vote.Id)
-		becomeFollower(c.replica)
 		c.ctrl.Close()
+		becomeFollower(c.replica)
 		return
 	}
 
 	c.logger.Debug("Rejecting candidate vote [%v]", vote.Id)
 	req.Ack(voteResponse{Term: vote.Term, Granted: false})
 	c.replica.SetTerm(vote.Term, nil, nil)
-	becomeCandidate(c.replica)
 	c.ctrl.Close()
+	becomeCandidate(c.replica)
 }
 
 func (c *follower) handleReplication(req *chans.Request) {
@@ -206,13 +212,13 @@ func (c *follower) handleReplication(req *chans.Request) {
 		return
 	}
 
-	c.logger.Debug("Handling replication: %v", repl)
+	c.logger.Debug("Handling replication: %v", len(repl.Items))
 	if repl.Term > c.term.Num || c.term.LeaderId == nil {
-		c.logger.Info("New leader detected [%v]", repl.LeaderId)
+		c.logger.Info("New leader detected [%v]", repl.LeaderId.String()[:8])
 		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
 		c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
-		becomeFollower(c.replica)
 		c.ctrl.Close()
+		becomeFollower(c.replica)
 		return
 	}
 

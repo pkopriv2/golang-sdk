@@ -1,33 +1,33 @@
 package raft
 
 import (
+	"fmt"
 	"os"
 	"runtime"
-	"runtime/pprof"
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
+	uuid "github.com/satori/go.uuid"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestHost_Close(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Debug)
+	ctx := context.NewContext(os.Stdout, context.Off)
 
 	before := runtime.NumGoroutine()
-	pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
 
-	host, err := Start(ctx, ":0", WithRandomStoragePath())
+	host, err := Start(ctx, ":0", WithTmpStorage())
 	if !assert.Nil(t, err) {
 		return
 	}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 	assert.Nil(t, host.Close())
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	runtime.GC()
-	pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
 	assert.True(t, before <= runtime.NumGoroutine())
 }
 
@@ -101,20 +101,24 @@ func TestHost_Close(t *testing.T) {
 //}
 //}
 
-//func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
-//ctx := context.NewContext(context.NewEmptyConfig())
-//defer ctx.Close()
+func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, context.Debug)
+	defer ctx.Close()
 
-//cluster, err := StartTestCluster(ctx, 2)
-//assert.Nil(t, err)
+	cluster, err := startTestCluster(ctx, 2)
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//timer := ctx.Timer(10 * time.Second)
-//defer timer.Close()
+	timer := context.NewTimer(ctx.Control(), 10*time.Second)
+	defer timer.Close()
 
-//host, err := ElectLeader(timer.Closed(), cluster)
-//assert.Nil(t, err)
-//assert.NotNil(t, host)
-//}
+	host, err := electLeader(timer.Closed(), cluster)
+	assert.Nil(t, err)
+
+	fmt.Println("Elected leader: ", host.Addr())
+	assert.NotNil(t, host)
+}
 
 //func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
 //ctx := context.NewContext(context.NewEmptyConfig())
@@ -578,3 +582,169 @@ func TestHost_Close(t *testing.T) {
 //return log.Head() >= index && log.Committed() >= index
 //}
 //}
+
+func startTestHost(ctx context.Context) (Host, error) {
+	return Start(ctx, ":0", WithTmpStorage())
+}
+
+func joinTestHost(ctx context.Context, peer string) (Host, error) {
+	return Join(ctx, ":0", []string{peer}, WithTmpStorage())
+}
+
+func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
+	if size < 1 {
+		return []Host{}, nil
+	}
+
+	ctx = ctx.Sub("Cluster(size=%v)", size)
+	defer func() {
+		if err != nil {
+			ctx.Control().Close()
+		}
+	}()
+
+	// start the first
+	first, err := startTestHost(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "Error starting first host")
+	}
+	ctx.Control().Defer(func(error) {
+		first.Close()
+	})
+
+	first, err = electLeader(ctx.Control().Closed(), []Host{first})
+	if first == nil {
+		return nil, errors.Wrap(ErrNoLeader, "First member failed to become leader")
+	}
+
+	hosts := []Host{first}
+	for i := 1; i < size; i++ {
+		host, err := joinTestHost(ctx, first.Addr())
+		if err != nil {
+			return nil, errors.Wrapf(err, "Error starting [%v] host", i)
+		}
+
+		hosts = append(hosts, host)
+		ctx.Control().Defer(func(error) {
+			host.Close()
+		})
+	}
+
+	return hosts, nil
+}
+
+func electLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {
+	var term int64 = 0
+	var leader *uuid.UUID
+
+	err := syncMajority(cancel, cluster, func(h Host) bool {
+		copyTerm := h.(*host).replica.CurrentTerm()
+		if copyTerm.Num > term {
+			term = copyTerm.Num
+		}
+
+		if copyTerm.Num == term && copyTerm.LeaderId != nil {
+			leader = copyTerm.LeaderId
+		}
+
+		return leader != nil && copyTerm.LeaderId == leader && copyTerm.Num == term
+	})
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+
+	if leader == nil {
+		return nil, nil
+	}
+
+	return first(cluster, func(h Host) bool {
+		return h.Id() == *leader
+	}), nil
+}
+
+func syncMajority(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) error {
+	done := make(map[uuid.UUID]struct{})
+	start := time.Now()
+
+	majority := majority(len(cluster))
+	for len(done) < majority {
+		for _, h := range cluster {
+			if context.IsClosed(cancel) {
+				return ErrCanceled
+			}
+
+			if _, ok := done[h.Id()]; ok {
+				continue
+			}
+
+			if fn(h) {
+				done[h.Id()] = struct{}{}
+				continue
+			}
+
+			if time.Now().Sub(start) > 10*time.Second {
+				h.(*host).Context().Logger().Info("Still not sync'ed")
+			}
+		}
+		<-time.After(250 * time.Millisecond)
+	}
+	return nil
+}
+
+func syncAll(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) error {
+	done := make(map[uuid.UUID]struct{})
+	start := time.Now()
+
+	for len(done) < len(cluster) {
+		for _, h := range cluster {
+			if context.IsClosed(cancel) {
+				return ErrCanceled
+			}
+
+			if _, ok := done[h.Id()]; ok {
+				continue
+			}
+
+			if fn(h) {
+				done[h.Id()] = struct{}{}
+				continue
+			}
+
+			if time.Now().Sub(start) > 10*time.Second {
+				h.(*host).Context().Logger().Info("Still not sync'ed")
+			}
+		}
+		<-time.After(250 * time.Millisecond)
+	}
+	return nil
+}
+
+func first(cluster []Host, fn func(h Host) bool) Host {
+	for _, h := range cluster {
+		if fn(h) {
+			return h
+		}
+	}
+
+	return nil
+}
+
+func index(cluster []Host, fn func(h Host) bool) int {
+	for i, h := range cluster {
+		if fn(h) {
+			return i
+		}
+	}
+
+	return -1
+}
+
+func collect(cluster []Host, fn func(h Host) bool) []Host {
+	ret := make([]Host, 0, len(cluster))
+	for _, h := range cluster {
+		if fn(h) {
+			ret = append(ret, h)
+		}
+	}
+	return ret
+}

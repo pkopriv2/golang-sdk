@@ -16,12 +16,12 @@ type rpcServer struct {
 }
 
 // Returns a new service handler for the ractlica
-func newServer(ctx context.Context, self *replica, listener net.Listener, workers int) (rpc.Server, error) {
+func newServer(ctx context.Context, self *replica, listener net.Listener) (rpc.Server, error) {
 	server := &rpcServer{
 		ctx:    ctx,
 		logger: ctx.Logger(),
 		self:   self,
-		enc:    enc.Gob}
+		enc:    self.Options.Encoder}
 
 	return rpc.Serve(ctx,
 		rpc.BuildHandlers(
@@ -34,7 +34,8 @@ func newServer(ctx context.Context, self *replica, listener net.Listener, worker
 			rpc.WithHandler(funcInstallSnapshot, server.InstallSnapshot),
 		),
 		rpc.WithListener(listener),
-		rpc.WithNumWorkers(workers))
+		rpc.WithNumWorkers(self.Options.Workers),
+		rpc.WithEncoder(self.Options.Encoder))
 }
 
 func (s *rpcServer) Status(req rpc.Request) rpc.Response {

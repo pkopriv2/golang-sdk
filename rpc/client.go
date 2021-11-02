@@ -63,6 +63,12 @@ func WithListener(l net.Listener) Option {
 	}
 }
 
+func WithEncoder(e enc.EncoderDecoder) Option {
+	return func(o *Options) {
+		o.Encoder = e
+	}
+}
+
 func WithNumWorkers(num int) Option {
 	return func(o *Options) {
 		o.NumWorkers = num
@@ -82,11 +88,6 @@ func buildOptions(fns []Option) (ret Options) {
 		fn(&ret)
 	}
 	return
-}
-
-type request struct {
-	Raw  Request
-	Resp chan<- Response
 }
 
 type client struct {

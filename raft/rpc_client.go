@@ -1,11 +1,9 @@
 package raft
 
 import (
-	"time"
-
+	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
-	"github.com/pkopriv2/golang-sdk/lang/net"
 	"github.com/pkopriv2/golang-sdk/rpc"
 )
 
@@ -14,15 +12,17 @@ type rpcClient struct {
 	enc enc.EncoderDecoder
 }
 
-func dialRpcClient(net net.Network, timeout time.Duration, addr string, enc enc.EncoderDecoder) (ret *rpcClient, err error) {
-	client, err := rpc.Dial(rpc.NewDialer(net, addr), rpc.WithDialTimeout(timeout))
+func dialRpcClient(addr string, opts Options) (ret *rpcClient, err error) {
+	client, err := rpc.Dial(rpc.NewDialer(opts.Network, addr),
+		rpc.WithDialTimeout(opts.DialTimeout),
+		rpc.WithEncoder(opts.Encoder))
 	if err != nil {
 		return
 	}
 
 	ret = &rpcClient{
 		raw: client,
-		enc: enc}
+		enc: opts.Encoder}
 	return
 }
 
@@ -36,7 +36,7 @@ func (c *rpcClient) Barrier() (int64, error) {
 			Func: funcReadBarrier,
 		})
 	if err != nil || !resp.Ok {
-		return -1, errs.Or(err, resp.Error)
+		return -1, errs.Or(err, resp.Error())
 	}
 
 	var r readBarrierResponse
@@ -53,7 +53,7 @@ func (c *rpcClient) Status() (ret statusResponse, err error) {
 			Func: funcStatus,
 		})
 	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error)
+		err = errs.Or(err, resp.Error())
 		return
 	}
 
@@ -73,7 +73,7 @@ func (c *rpcClient) RequestVote(vote voteRequest) (ret voteResponse, err error) 
 			Body: bytes,
 		})
 	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error)
+		err = errs.Or(err, resp.Error())
 		return
 	}
 
@@ -84,7 +84,7 @@ func (c *rpcClient) RequestVote(vote voteRequest) (ret voteResponse, err error) 
 func (c *rpcClient) UpdateRoster(peer Peer, join bool) error {
 	var bytes []byte
 	if err := c.enc.EncodeBinary(rosterUpdateRequest{peer, join}, &bytes); err != nil {
-		return err
+		return errors.Wrapf(err, "Unable to encode roster update")
 	}
 
 	resp, err := c.raw.Send(
@@ -92,7 +92,7 @@ func (c *rpcClient) UpdateRoster(peer Peer, join bool) error {
 			Func: funcUpdateRoster,
 			Body: bytes,
 		})
-	return errs.Or(err, resp.Error)
+	return errs.Or(err, resp.Error())
 }
 
 func (c *rpcClient) Replicate(r replicateRequest) (ret replicateResponse, err error) {
@@ -107,7 +107,7 @@ func (c *rpcClient) Replicate(r replicateRequest) (ret replicateResponse, err er
 			Body: bytes,
 		})
 	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error)
+		err = errs.Or(err, resp.Error())
 		return
 	}
 
@@ -127,7 +127,7 @@ func (c *rpcClient) Append(r appendEventRequest) (ret appendEventResponse, err e
 			Body: bytes,
 		})
 	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error)
+		err = errs.Or(err, resp.Error())
 		return
 	}
 
@@ -147,7 +147,7 @@ func (c *rpcClient) InstallSnapshotSegment(snapshot installSnapshotRequest) (ret
 			Body: bytes,
 		})
 	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error)
+		err = errs.Or(err, resp.Error())
 		return
 	}
 

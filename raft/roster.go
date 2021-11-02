@@ -125,7 +125,7 @@ func (r *rosterManager) start() {
 						member = true
 					}
 
-					if member && config.Peers.Contains(r.self.Self) {
+					if member && !config.Peers.Contains(r.self.Self) {
 						r.logger.Info("No longer a member of the cluster [%v]", peers)
 						r.self.ctrl.Close()
 						ctrl.Close()

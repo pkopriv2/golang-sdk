@@ -1,6 +1,8 @@
 package raft
 
 import (
+	"fmt"
+
 	"github.com/boltdb/bolt"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
@@ -12,6 +14,10 @@ type term struct {
 	Num      int64      `json:"num"`       // the current term number (increases monotonically across the cluster)
 	LeaderId *uuid.UUID `json:"leader_id"` // the current leader (as seen by this member)
 	VotedFor *uuid.UUID `json:"voted_for"` // who was voted for this term (guaranteed not nil when leader != nil)
+}
+
+func (t term) String() string {
+	return fmt.Sprintf("%v", t.Num)
 }
 
 var (
@@ -69,12 +75,13 @@ func (t *TermStore) Get(id uuid.UUID) (term term, ok bool, err error) {
 		bytes = tx.Bucket(termBucket).Get(id.Bytes())
 		return nil
 	})
+	if bytes != nil {
+		if err = enc.Json.DecodeBinary(bytes, &term); err != nil {
+			return
+		}
 
-	if err = enc.Json.DecodeBinary(bytes, &term); err != nil {
-		return
+		ok = true
 	}
-
-	ok = true
 	return
 }
 

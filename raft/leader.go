@@ -96,6 +96,7 @@ func (l *leader) start() {
 				l.broadcastHeartbeat()
 			case <-l.syncer.ctrl.Closed():
 				l.logger.Error("Sync'er closed: %v", l.syncer.ctrl.Failure())
+				l.ctrl.Close()
 				becomeFollower(l.replica)
 				return
 			}
@@ -107,15 +108,15 @@ func (l *leader) start() {
 
 	// Establish leadership
 	if !l.broadcastHeartbeat() {
-		becomeFollower(l.replica)
 		l.ctrl.Close()
+		becomeFollower(l.replica)
 		return
 	}
 
 	// Establish read barrier
 	if _, err := l.replica.LocalAppend(appendEventRequest{Event{}, NoOp}); err != nil {
-		becomeFollower(l.replica)
 		l.ctrl.Close()
+		becomeFollower(l.replica)
 		return
 	}
 }
@@ -213,8 +214,8 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	score, err := sync.score(req.Canceled())
 	if err != nil {
 		req.Fail(err)
-		becomeFollower(c.replica)
 		c.ctrl.Fail(err)
+		becomeFollower(c.replica)
 		return
 	}
 
@@ -263,8 +264,8 @@ func (c *leader) handleRequestVote(req *chans.Request) {
 		req.Ack(voteResponse{Term: vote.Term, Granted: false})
 	}
 
-	becomeFollower(c.replica)
 	c.ctrl.Close()
+	becomeFollower(c.replica)
 }
 
 func (c *leader) broadcastHeartbeat() bool {
@@ -290,8 +291,8 @@ func (c *leader) broadcastHeartbeat() bool {
 		case resp := <-ch:
 			if resp.Term > c.term.Num {
 				c.replica.SetTerm(resp.Term, nil, c.term.VotedFor)
-				becomeFollower(c.replica)
 				c.ctrl.Close()
+				becomeFollower(c.replica)
 				return false
 			}
 
@@ -299,8 +300,8 @@ func (c *leader) broadcastHeartbeat() bool {
 		case <-timer.C:
 			c.logger.Error("Unable to retrieve enough heartbeat responses.")
 			c.replica.SetTerm(c.term.Num, nil, c.term.VotedFor)
-			becomeFollower(c.replica)
 			c.ctrl.Close()
+			becomeFollower(c.replica)
 			return false
 		}
 	}
@@ -358,14 +359,13 @@ func (s *logSyncer) spawnSyncer(p Peer) *peerSyncer {
 	go func() {
 		select {
 		case <-sync.ctrl.Closed():
-			s.logger.Error("Syncer died: %+v", sync.ctrl.Failure())
 			if cause := errs.Extract(sync.ctrl.Failure(), ErrNotLeader); cause == nil || cause == ErrNotLeader {
-				s.logger.Info("Shutting down log sync'er")
+				s.logger.Info("Shutting down log syncer")
 				s.ctrl.Fail(sync.ctrl.Failure())
 				return
 			}
 
-			s.logger.Info("Restarting sync'er: %v", p)
+			s.logger.Info("Restarting syncer: %v", p)
 			s.handleRosterChange(s.self.Cluster())
 			return
 		case <-s.ctrl.Closed():
@@ -619,6 +619,7 @@ func (s *peerSyncer) start() {
 					return nil
 				})
 				if err != nil {
+					s.logger.Error("Error sending batch: %v", err)
 					s.ctrl.Fail(err)
 					return
 				}
@@ -707,10 +708,12 @@ func (s *peerSyncer) getLatestLocalEntry() (Entry, error) {
 // Sends a batch up to the horizon
 func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry, bool, error) {
 	// scan a full batch of events.
-	batch, err := s.self.Log.Scan(prev.Index+1, min(horizon, prev.Index+256))
-	if err != nil {
+	batch, err := s.self.Log.Scan(prev.Index+1, min(horizon+1, prev.Index+1+256))
+	if err != nil || len(batch) == 0 {
 		return prev, false, err
 	}
+
+	s.logger.Debug("Sending batch [%v]", len(batch))
 
 	// send the append request.
 	resp, err := cl.Replicate(newReplication(s.self.Self.Id, s.term.Num, prev.Index, prev.Term, batch, s.self.Log.Committed()))

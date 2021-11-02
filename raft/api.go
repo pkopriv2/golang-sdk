@@ -120,6 +120,7 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	uuid "github.com/satori/go.uuid"
+	"github.com/spf13/afero"
 )
 
 // Core api errors
@@ -139,9 +140,12 @@ func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to open bolt instance")
 	}
-	ctx.Control().Defer(func(error) {
-		db.Close()
-	})
+	if opts.StorageDelete {
+		ctx.Control().Defer(func(error) {
+			ctx.Logger().Info("Removing storage [%v]", opts.StoragePath)
+			afero.NewOsFs().RemoveAll(opts.StoragePath)
+		})
+	}
 
 	host, err := newHost(ctx, addr, opts.Update(
 		WithBoltLogStore(db),
@@ -161,9 +165,12 @@ func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to open bolt instance")
 	}
-	ctx.Control().Defer(func(error) {
-		db.Close()
-	})
+	if opts.StorageDelete {
+		ctx.Control().Defer(func(error) {
+			ctx.Logger().Info("Removing storage [%v]", opts.StoragePath)
+			afero.NewOsFs().RemoveAll(opts.StoragePath)
+		})
+	}
 
 	host, err := newHost(ctx, addr, opts.Update(
 		WithBoltLogStore(db),

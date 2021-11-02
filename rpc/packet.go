@@ -55,13 +55,10 @@ func newPacket(data []byte) (ret packet) {
 // Reads a packet from the reader.
 func readPacketRaw(r io.Reader) (p packet, err error) {
 	if err = readHeaderRaw(r, &p.Header); err != nil {
-		err = errors.Wrapf(err, "Error reading packet header")
 		return
 	}
 
-	if err = p.Header.ReadPayload(r, &p.Data); err != nil {
-		err = errors.Wrapf(err, "Error reading packet data")
-	}
+	err = p.Header.ReadPayload(r, &p.Data)
 	return
 }
 
@@ -75,11 +72,9 @@ func writePacketRaw(w io.Writer, p packet) (err error) {
 
 	buf := &bytes.Buffer{}
 	if err = writeHeaderRaw(buf, p.Header); err != nil {
-		err = errors.Wrapf(err, "Error writing packet header")
 		return
 	}
 	if _, err = buf.Write(p.Data); err != nil {
-		err = errors.Wrapf(err, "Error writing packet body")
 		return
 	}
 

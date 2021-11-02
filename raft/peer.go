@@ -80,5 +80,5 @@ func (p Peer) ClientPool(ctrl context.Control, opts Options) pool.ObjectPool {
 }
 
 func (p Peer) Dial(opts Options) (*rpcClient, error) {
-	return dialRpcClient(opts.Network, opts.DialTimeout, p.Addr, opts.Encoder)
+	return dialRpcClient(p.Addr, opts)
 }

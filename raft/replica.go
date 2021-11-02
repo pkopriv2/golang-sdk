@@ -135,12 +135,12 @@ func (r *replica) start() error {
 	// retrieve the term from the durable store
 	term, _, err := r.Terms.Get(r.Self.Id)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "Unable to get latest term [%v]", r.Self.Id)
 	}
 
 	// set the term from durable storage.
 	if err := r.SetTerm(term.Num, term.LeaderId, term.VotedFor); err != nil {
-		return err
+		return errors.Wrapf(err, "Unable to set latest term [%v]", r.Self.Id)
 	}
 
 	listenRosterChanges(r)

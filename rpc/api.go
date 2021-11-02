@@ -3,6 +3,7 @@ package rpc
 import (
 	"io"
 
+	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 )
 
@@ -56,9 +57,16 @@ func (r Request) Decode(dec enc.Decoder, ptr interface{}) error {
 
 // Asimple rpc response
 type Response struct {
-	Ok    bool   `json:"ok"`
-	Error error  `json:"error"`
-	Body  []byte `json:"body"`
+	Ok   bool   `json:"ok"`
+	Err  string `json:"error"`
+	Body []byte `json:"body"`
+}
+
+func (r Response) Error() error {
+	if !r.Ok && r.Err != "" {
+		return errors.New(r.Err)
+	}
+	return nil
 }
 
 func (r Response) Decode(dec enc.Decoder, ptr interface{}) error {
@@ -75,7 +83,11 @@ func BuildRequest(fns ...func(*Request) error) (ret Request, err error) {
 }
 
 func NewErrorResponse(err error) Response {
-	return Response{Error: err}
+	if err != nil {
+		return Response{Err: err.Error()}
+	} else {
+		return Response{Ok: true}
+	}
 }
 
 func NewStructResponse(enc enc.Encoder, val interface{}) (ret Response) {

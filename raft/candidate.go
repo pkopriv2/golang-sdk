@@ -93,6 +93,7 @@ func (c *candidate) start() {
 				}
 			case resp := <-ballots:
 				if resp.Err != nil {
+					c.logger.Info("Error retrieving vote [%v]", resp.Err)
 					continue
 				}
 

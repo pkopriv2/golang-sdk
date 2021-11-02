@@ -44,7 +44,8 @@ func Serve(ctx context.Context, funcs Handlers, o ...Option) (ret Server, err er
 		logger:   ctx.Logger(),
 		listener: listener,
 		funcs:    funcs,
-		pool:     pool}
+		pool:     pool,
+		opts:     opts}
 
 	s.start()
 	return s, nil
@@ -87,7 +88,7 @@ func (s *server) start() {
 		for {
 			conn, err := s.listener.Accept()
 			if err != nil {
-				s.logger.Error("Error accepting connection: %v", conn)
+				s.logger.Error("Error accepting connection: %v", err)
 				return
 			}
 
@@ -124,7 +125,7 @@ func (s *server) newWorker(conn net.Connection) func() {
 func (s *server) handle(req Request) (resp Response) {
 	fn, ok := s.funcs[req.Func]
 	if !ok {
-		resp = Response{Error: errors.Wrapf(ErrNoHandler, "No such handler [%v]", req.Func)}
+		resp = NewErrorResponse(errors.Wrapf(ErrNoHandler, "No such handler [%v]", req.Func))
 		return
 	}
 

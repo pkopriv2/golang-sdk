@@ -58,7 +58,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		replica.Close()
 	})
 
-	server, err := newServer(ctx, replica, listener, replica.Options.Workers)
+	server, err := newServer(ctx, replica, listener)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (h *host) Addrs() []string {
 }
 
 func (h *host) Start() error {
-	becomeFollower(h.replica)
+	becomeCandidate(h.replica)
 	return nil
 }
 
@@ -185,11 +185,7 @@ func (h *host) Leave() error {
 }
 
 func (h *host) tryJoin(addr string) error {
-	cl, err := dialRpcClient(
-		h.replica.Options.Network,
-		h.replica.Options.ReadTimeout,
-		addr,
-		h.replica.Options.Encoder)
+	cl, err := dialRpcClient(addr, h.replica.Options)
 	if err != nil {
 		return errors.Wrapf(err, "Error connecting to peer [%v]", addr)
 	}
