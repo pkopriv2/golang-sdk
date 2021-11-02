@@ -46,6 +46,8 @@ func (c *roster) Close() {
 	c.ver.Close()
 }
 
+// FIXME: Need a better way to manage the roster!  Currently scans entire log.  Could
+// scan backwards until the first config entry is found, then listen forward.
 type rosterManager struct {
 	logger context.Logger
 	self   *replica

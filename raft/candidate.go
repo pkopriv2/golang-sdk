@@ -42,7 +42,7 @@ func (c *candidate) start() {
 		return
 	}
 
-	c.logger.Debug("Sending ballots: (t=%v,mi=%v,mt=%v)", c.term.Num, maxIndex, maxTerm)
+	c.logger.Debug("Sending ballots: (term=%v,maxIndex=%v,maxTerm=%v)", c.term.Num, maxIndex, maxTerm)
 	ballots := c.replica.Broadcast(func(cl *rpcClient) (interface{}, error) {
 		return cl.RequestVote(
 			voteRequest{
@@ -93,7 +93,7 @@ func (c *candidate) start() {
 				}
 			case resp := <-ballots:
 				if resp.Err != nil {
-					c.logger.Info("Error retrieving vote [%v]", resp.Err)
+					c.logger.Info("Error retrieving vote from peer [%v]: %v", resp.Peer, resp.Err)
 					continue
 				}
 
@@ -148,9 +148,9 @@ func (c *candidate) handleReplication(req *chans.Request) {
 		return
 	}
 
-	// append.term is >= term.  use it from now on.
+	// repl.term is >= term.  use it from now on.
 	req.Ack(replicateResponse{Term: repl.Term, Success: false})
 	c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
-	becomeFollower(c.replica)
 	c.ctrl.Close()
+	becomeFollower(c.replica)
 }

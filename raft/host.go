@@ -25,7 +25,7 @@ type host struct {
 }
 
 func newHost(ctx context.Context, addr string, opts Options) (h *host, err error) {
-	ctx = ctx.Sub("RaftHost")
+	ctx = ctx.Sub("Raft")
 	defer func() {
 		if err != nil {
 			ctx.Control().Fail(err)
@@ -34,17 +34,17 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 
 	store, err := opts.LogStorage()
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	terms, err := opts.TermStorage()
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	listener, err := opts.Network.Listen(addr)
 	if err != nil {
-		return nil, err
+		return
 	}
 	ctx.Control().Defer(func(cause error) {
 		listener.Close()
@@ -52,7 +52,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 
 	replica, err := newReplica(ctx, store, terms, listener.Address().String(), opts)
 	if err != nil {
-		return nil, err
+		return
 	}
 	ctx.Control().Defer(func(cause error) {
 		replica.Close()
@@ -60,7 +60,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 
 	server, err := newServer(ctx, replica, listener)
 	if err != nil {
-		return nil, err
+		return
 	}
 	ctx.Control().Defer(func(cause error) {
 		server.Close()
@@ -76,7 +76,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		sync.Close()
 	})
 
-	return &host{
+	h = &host{
 		ctx:        ctx,
 		ctrl:       ctx.Control(),
 		logger:     ctx.Logger(),
@@ -84,7 +84,8 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		server:     server,
 		leaderPool: pool,
 		sync:       sync,
-	}, nil
+	}
+	return
 }
 
 func (h *host) Fail(e error) error {

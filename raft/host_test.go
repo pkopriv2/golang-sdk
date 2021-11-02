@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"fmt"
 	"os"
 	"runtime"
 	"testing"
@@ -101,11 +100,29 @@ func TestHost_Close(t *testing.T) {
 //}
 //}
 
-func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
+//func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
+//ctx := context.NewContext(os.Stdout, context.Off)
+//defer ctx.Close()
+
+//cluster, err := startTestCluster(ctx, 2)
+//if !assert.Nil(t, err) {
+//return
+//}
+
+//timer := context.NewTimer(ctx.Control(), 10*time.Second)
+//defer timer.Close()
+
+//host, err := electLeader(timer.Closed(), cluster)
+//assert.Nil(t, err)
+
+//assert.NotNil(t, host)
+//}
+
+func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	cluster, err := startTestCluster(ctx, 2)
+	cluster, err := startTestCluster(ctx, 3)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -116,23 +133,8 @@ func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
 	host, err := electLeader(timer.Closed(), cluster)
 	assert.Nil(t, err)
 
-	fmt.Println("Elected leader: ", host.Addr())
 	assert.NotNil(t, host)
 }
-
-//func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
-//ctx := context.NewContext(context.NewEmptyConfig())
-//defer ctx.Close()
-//cluster, err := StartTestCluster(ctx, 3)
-//assert.Nil(t, err)
-
-//timer := ctx.Timer(10 * time.Second)
-//defer timer.Close()
-
-//host, err := ElectLeader(timer.Closed(), cluster)
-//assert.Nil(t, err)
-//assert.NotNil(t, host)
-//}
 
 //func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 //ctx := context.NewContext(context.NewEmptyConfig())

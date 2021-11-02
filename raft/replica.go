@@ -210,8 +210,9 @@ func (r *replica) Majority() int {
 }
 
 type broadCastResponse struct {
-	Err error
-	Val interface{}
+	Peer Peer
+	Err  error
+	Val  interface{}
 }
 
 func (r *replica) Broadcast(fn func(c *rpcClient) (interface{}, error)) <-chan broadCastResponse {
@@ -221,18 +222,18 @@ func (r *replica) Broadcast(fn func(c *rpcClient) (interface{}, error)) <-chan b
 		go func(p Peer) {
 			cl, err := p.Dial(r.Options)
 			if err != nil {
-				ret <- broadCastResponse{Err: err}
+				ret <- broadCastResponse{Peer: p, Err: err}
 				return
 			}
 
 			defer cl.Close()
 			val, err := fn(cl)
 			if err != nil {
-				ret <- broadCastResponse{Err: err}
+				ret <- broadCastResponse{Peer: p, Err: err}
 				return
 			}
 
-			ret <- broadCastResponse{Val: val}
+			ret <- broadCastResponse{Peer: p, Val: val}
 		}(p)
 	}
 	return ret

@@ -1,6 +1,6 @@
 module github.com/pkopriv2/golang-sdk
 
-go 1.13
+go 1.16
 
 require (
 	github.com/BurntSushi/toml v0.3.1
@@ -12,7 +12,6 @@ require (
 	github.com/facebookgo/stack v0.0.0-20160209184415-751773369052 // indirect
 	github.com/facebookgo/subset v0.0.0-20200203212716-c811ad88dec4 // indirect
 	github.com/fatih/color v1.9.0
-	github.com/google/go-cmp v0.5.6 // indirect
 	github.com/gorilla/mux v1.7.4
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/leekchan/accounting v1.0.0
@@ -26,7 +25,6 @@ require (
 	github.com/onsi/gomega v1.16.0 // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/term v1.1.0
-	github.com/pkopriv2/bourne v0.0.0-20170609135643-99401bbfe692
 	github.com/russross/blackfriday v2.0.0+incompatible
 	github.com/satori/go.uuid v1.2.0
 	github.com/sethvargo/go-diceware v0.2.0
@@ -39,7 +37,6 @@ require (
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
 	golang.org/x/net v0.0.0-20210503060351-7fd8e65b6420 // indirect
 	golang.org/x/sys v0.0.0-20210908233432-aa78b53d3365
-	google.golang.org/protobuf v1.27.1 // indirect
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/mailgun/mailgun-go.v1 v1.1.1
 	gopkg.in/yaml.v2 v2.4.0

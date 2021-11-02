@@ -73,6 +73,7 @@ func (l *leader) start() {
 		defer l.ctrl.Close()
 
 		timer := time.NewTimer(l.replica.ElectionTimeout / 5)
+		defer timer.Stop()
 		for !l.ctrl.IsClosed() {
 
 			select {
@@ -95,7 +96,7 @@ func (l *leader) start() {
 			case <-timer.C:
 				l.broadcastHeartbeat()
 			case <-l.syncer.ctrl.Closed():
-				l.logger.Error("Sync'er closed: %v", l.syncer.ctrl.Failure())
+				l.logger.Error("Syncer closed: %v", l.syncer.ctrl.Failure())
 				l.ctrl.Close()
 				becomeFollower(l.replica)
 				return
@@ -163,7 +164,7 @@ func (c *leader) handleReadBarrier(req *chans.Request) {
 func (c *leader) handleLocalAppend(req *chans.Request) {
 	err := c.workPool.SubmitOrCancel(req.Canceled(), func() {
 		req.Return(c.syncer.Append(req.Body().(appendEventRequest)))
-		c.broadcastHeartbeat() // ?? why this ??
+		c.broadcastHeartbeat() // This commits the log entry.
 	})
 
 	if err != nil {
@@ -178,8 +179,8 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	if !update.Join {
 		all = all.Delete(update.Peer)
 
-		var bytes []byte
-		if err := enc.Json.EncodeBinary(Config{all}, &bytes); err != nil {
+		bytes, err := Config{all}.encode(enc.Json)
+		if err != nil {
 			return
 		}
 
@@ -224,8 +225,8 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		return
 	}
 
-	var bytes []byte
-	if err := enc.Json.EncodeBinary(Config{all}, &bytes); err != nil {
+	bytes, err := Config{all}.encode(enc.Json)
+	if err != nil {
 		return
 	}
 
@@ -290,7 +291,7 @@ func (c *leader) broadcastHeartbeat() bool {
 			return false
 		case resp := <-ch:
 			if resp.Term > c.term.Num {
-				c.replica.SetTerm(resp.Term, nil, c.term.VotedFor)
+				c.replica.SetTerm(resp.Term, nil, nil)
 				c.ctrl.Close()
 				becomeFollower(c.replica)
 				return false
@@ -619,13 +620,12 @@ func (s *peerSyncer) start() {
 					return nil
 				})
 				if err != nil {
-					s.logger.Error("Error sending batch: %v", err)
 					s.ctrl.Fail(err)
 					return
 				}
 			}
 
-			s.logger.Debug("Sync'ed to [%v]", prev.Index)
+			s.logger.Debug("Synced to [%v]", prev.Index)
 		}
 	}()
 }

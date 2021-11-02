@@ -114,13 +114,13 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/boltdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	uuid "github.com/satori/go.uuid"
-	"github.com/spf13/afero"
 )
 
 // Core api errors
@@ -132,20 +132,25 @@ var (
 	ErrNoLeader    = errors.New("Raft:ErrNoLeader")
 )
 
+func StartBackground(addr string, fns ...Option) (Host, error) {
+	ctx := context.NewContext(os.Stdout, context.Off)
+	return Start(ctx, addr, fns...)
+}
+
 // Starts the first member of a raft cluster.  The given addr MUST be routable by external members
 func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 	opts := buildOptions(fns...)
 
-	db, err := boltdb.Open(ctx, opts.StoragePath)
+	db, err := boltdb.Open(opts.StoragePath)
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to open bolt instance")
 	}
-	if opts.StorageDelete {
-		ctx.Control().Defer(func(error) {
-			ctx.Logger().Info("Removing storage [%v]", opts.StoragePath)
-			afero.NewOsFs().RemoveAll(opts.StoragePath)
-		})
-	}
+	ctx.Control().Defer(func(error) {
+		db.Close()
+		if opts.StorageDelete {
+			boltdb.Delete(db)
+		}
+	})
 
 	host, err := newHost(ctx, addr, opts.Update(
 		WithBoltLogStore(db),
@@ -161,16 +166,16 @@ func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host, error) {
 	opts := buildOptions(fns...)
 
-	db, err := boltdb.Open(ctx, opts.StoragePath)
+	db, err := boltdb.Open(opts.StoragePath)
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to open bolt instance")
 	}
-	if opts.StorageDelete {
-		ctx.Control().Defer(func(error) {
-			ctx.Logger().Info("Removing storage [%v]", opts.StoragePath)
-			afero.NewOsFs().RemoveAll(opts.StoragePath)
-		})
-	}
+	ctx.Control().Defer(func(error) {
+		db.Close()
+		if opts.StorageDelete {
+			boltdb.Delete(db)
+		}
+	})
 
 	host, err := newHost(ctx, addr, opts.Update(
 		WithBoltLogStore(db),
@@ -236,6 +241,11 @@ func (e Entry) encode(enc enc.Encoder) (ret []byte, err error) {
 
 type Config struct {
 	Peers Peers `json:"peers"`
+}
+
+func (c Config) encode(enc enc.Encoder) (ret []byte, err error) {
+	err = enc.EncodeBinary(c, &ret)
+	return
 }
 
 func parseConfig(dec enc.Decoder, data []byte) (ret Config, err error) {

@@ -14,7 +14,9 @@ func TestBoltLog_CreateSnapshot_Empty(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	db := boltdb.MustOpenRandom(ctx)
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
 	initBoltBuckets(db)
 
 	s, err := createEmptyBoltSnapshot(db, Config{Peers: []Peer{}})
@@ -34,7 +36,9 @@ func TestBoltLog_CreateSnapshot_Config(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	db := boltdb.MustOpenRandom(ctx)
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
 	initBoltBuckets(db)
 
 	expected := Config{Peers: []Peer{Peer{uuid.NewV1(), "addr"}}}
@@ -56,7 +60,9 @@ func TestBoltLog_CreateSnapshot_Events(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	db := boltdb.MustOpenRandom(ctx)
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
 	initBoltBuckets(db)
 
 	expected := []Event{[]byte{0, 1}, []byte{0, 1}}
@@ -73,7 +79,9 @@ func TestBoltLog_CreateSnapshot_MultipleWithEvents(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	db := boltdb.MustOpenRandom(ctx)
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
 	initBoltBuckets(db)
 
 	expected1 := []Event{[]byte{0, 1}, []byte{2, 3}}
@@ -106,7 +114,9 @@ func TestBoltLog_DeleteSnapshot(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	db := boltdb.MustOpenRandom(ctx)
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
 	initBoltBuckets(db)
 
 	events := []Event{[]byte{0, 1}, []byte{2, 3}}
@@ -126,7 +136,11 @@ func TestBoltStore_New_WithConfig(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	store, err := NewBoltStore(boltdb.MustOpenRandom(ctx))
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
+
+	store, err := NewBoltStore(db)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -151,7 +165,11 @@ func TestBoltStore_Get_NoExist(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	store, err := NewBoltStore(boltdb.MustOpenRandom(ctx))
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
+
+	store, err := NewBoltStore(db)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -165,7 +183,11 @@ func TestBoltLog_Create_Empty(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	store, err := NewBoltStore(boltdb.MustOpenRandom(ctx))
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
+
+	store, err := NewBoltStore(db)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -202,7 +224,11 @@ func TestBoltLog_Append_Single(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	store, err := NewBoltStore(boltdb.MustOpenRandom(ctx))
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
+
+	store, err := NewBoltStore(db)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -227,7 +253,11 @@ func TestBoltLog_Append_Multi(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
-	store, err := NewBoltStore(boltdb.MustOpenRandom(ctx))
+	db := boltdb.MustOpenTemp()
+	defer boltdb.Delete(db)
+	defer boltdb.Close(db)
+
+	store, err := NewBoltStore(db)
 	if !assert.Nil(t, err) {
 		return
 	}
