@@ -1,7 +1,6 @@
 package errs
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 
@@ -9,9 +8,9 @@ import (
 )
 
 var (
-	ArgError      = fmt.Errorf("Errs:ArgError")
-	StateError    = fmt.Errorf("Errs:StateError")
-	ClosedError   = fmt.Errorf("Errs:ClosedError")
+	ArgError      = errors.New("Errs:ArgError")
+	StateError    = errors.New("Errs:StateError")
+	ClosedError   = errors.New("Errs:ClosedError")
 	CanceledError = errors.New("Errs:CanceledError")
 	TimeoutError  = errors.New("Errs:TimeoutError")
 )

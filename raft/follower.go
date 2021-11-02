@@ -1,284 +1,251 @@
 package raft
 
-//// The follower machine.  This
-//type follower struct {
-//ctx     common.Context
-//logger  common.Logger
-//ctrl    common.Control
-//term    term
-//replica *replica
-//}
+import (
+	"time"
 
-//func becomeFollower(replica *replica) {
-//ctx := replica.Ctx.Sub("Follower(%v)", replica.CurrentTerm())
-//ctx.Logger().Info("Becoming follower")
-//l := &follower{
-//ctx:     ctx,
-//logger:  ctx.Logger(),
-//ctrl:    ctx.Control(),
-//term:    replica.CurrentTerm(),
-//replica: replica,
-//}
-//l.start()
-//}
+	"github.com/pkopriv2/golang-sdk/lang/chans"
+	"github.com/pkopriv2/golang-sdk/lang/context"
+)
 
-//func (c *follower) start() {
-//// Proxy routine. (Out of band to allow replication requests through faster)
-//go func() {
-//defer c.ctrl.Close()
-//for {
-//select {
-//case <-c.ctrl.Closed():
-//return
-//case req := <-c.replica.LocalAppends:
-//c.handleLocalAppend(req)
-//case req := <-c.replica.RemoteAppends:
-//c.handleRemoteAppend(req)
-//case req := <-c.replica.RosterUpdates:
-//c.handleRosterUpdate(req)
-//case req := <-c.replica.Barrier:
-//c.handleReadBarrier(req)
-//}
-//}
-//}()
+// The follower machine.  This
+type follower struct {
+	ctx     context.Context
+	logger  context.Logger
+	ctrl    context.Control
+	term    term
+	replica *replica
+}
 
-//// Main routine
-//go func() {
-//defer c.ctrl.Close()
+func becomeFollower(replica *replica) {
+	ctx := replica.Ctx.Sub("Follower(%v)", replica.CurrentTerm())
+	ctx.Logger().Info("Becoming follower")
+	l := &follower{
+		ctx:     ctx,
+		logger:  ctx.Logger(),
+		ctrl:    ctx.Control(),
+		term:    replica.CurrentTerm(),
+		replica: replica,
+	}
+	l.start()
+}
 
-//var snapshotStream chan<- Event
-//var snapshotDone *common.Request
-//var snapshotOffset int
+func (c *follower) start() {
+	// Proxy routine. (Out of band to allow replication requests through faster)
+	go func() {
+		defer c.ctrl.Close()
+		for {
+			select {
+			case <-c.ctrl.Closed():
+				return
+			case req := <-c.replica.LocalAppends:
+				c.handleLocalAppend(req)
+			case req := <-c.replica.RemoteAppends:
+				c.handleRemoteAppend(req)
+			case req := <-c.replica.RosterUpdates:
+				c.handleRosterUpdate(req)
+			case req := <-c.replica.Barrier:
+				c.handleReadBarrier(req)
+			}
+		}
+	}()
 
-//timer := time.NewTimer(c.replica.ElectionTimeout)
-//for ! c.ctrl.IsClosed() {
-//select {
-//case <-c.ctrl.Closed():
-//return
-//case <-c.replica.ctrl.Closed():
-//return
-//case req := <-c.replica.Replications:
-//c.handleReplication(req)
-//case req := <-c.replica.VoteRequests:
-//c.handleRequestVote(req)
-//case req := <-c.replica.Snapshots:
-//snapshotStream, snapshotDone, snapshotOffset = c.handleInstallSnapshot(req, snapshotStream, snapshotDone, snapshotOffset)
-//case <-timer.C:
-//c.logger.Info("Waited too long for heartbeat: %v", c.replica.ElectionTimeout)
-//becomeCandidate(c.replica)
-//return
-//}
+	// Main routine
+	go func() {
+		defer c.ctrl.Close()
 
-//c.logger.Debug("Resetting election timeout: %v", c.replica.ElectionTimeout)
-//timer.Reset(c.replica.ElectionTimeout)
-//}
-//}()
-//}
+		timer := time.NewTimer(c.replica.ElectionTimeout)
+		for !c.ctrl.IsClosed() {
+			select {
+			case <-c.ctrl.Closed():
+				return
+			case <-c.replica.ctrl.Closed():
+				return
+			case req := <-c.replica.Replications:
+				c.handleReplication(req)
+			case req := <-c.replica.VoteRequests:
+				c.handleRequestVote(req)
+			case req := <-c.replica.Snapshots:
+				c.handleInstallSnapshotSegment(req)
+			case <-timer.C:
+				c.logger.Info("Waited too long for heartbeat: %v", c.replica.ElectionTimeout)
+				becomeCandidate(c.replica)
+				return
+			}
 
-//func (c *follower) handleLocalAppend(req *common.Request) {
-//req.Fail(NotLeaderError)
-//}
+			c.logger.Debug("Resetting election timeout: %v", c.replica.ElectionTimeout)
+			timer.Reset(c.replica.ElectionTimeout)
+		}
+	}()
+}
 
-//func (c *follower) handleReadBarrier(req *common.Request) {
-//req.Fail(NotLeaderError)
-//}
+func (c *follower) handleLocalAppend(req *chans.Request) {
+	req.Fail(ErrNotLeader)
+}
 
-//func (c *follower) handleRemoteAppend(req *common.Request) {
-//req.Fail(NotLeaderError)
-//}
+func (c *follower) handleReadBarrier(req *chans.Request) {
+	req.Fail(ErrNotLeader)
+}
 
-//func (c *follower) handleRosterUpdate(req *common.Request) {
-//req.Fail(NotLeaderError)
-//}
+func (c *follower) handleRemoteAppend(req *chans.Request) {
+	req.Fail(ErrNotLeader)
+}
 
-//func (c *follower) handleInstallSnapshot(req *common.Request, data chan<- Event, done *common.Request, offset int) (chan<- Event, *common.Request, int) {
-//segment := req.Body().(installSnapshot)
-//if segment.term < c.term.Num {
-//req.Ack(newResponse(c.term.Num, false))
-//return data, done, offset
-//}
+func (c *follower) handleRosterUpdate(req *chans.Request) {
+	req.Fail(ErrNotLeader)
+}
 
-//if data == nil {
-//data, done = c.startSnapshotStream(segment)
-//offset = 0
-//}
+func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
+	segment := req.Body().(installSnapshotRequest)
+	if segment.Term < c.term.Num {
+		req.Ack(installSnapshotResponse{Term: c.term.Num, Success: false})
+		return
+	}
 
-//if segment.batchOffset != offset {
-//close(data)
-//data, done = c.startSnapshotStream(segment)
-//offset = 0
-//}
+	//if data == nil {
+	//data, done = c.startSnapshotStream(segment)
+	//offset = 0
+	//}
 
-//c.logger.Info("Installing snapshot: %v", segment)
-//if err := c.streamSnapshotSegment(data, segment); err != nil {
-//req.Fail(err)
-//return data, done, offset
-//}
+	//if segment.BatchOffset != offset {
+	//close(data)
+	//data, done = c.startSnapshotStream(segment)
+	//offset = 0
+	//}
 
-//c.logger.Error("Successfully installed segment: [%v/%v]", offset, segment.size)
+	//c.logger.Info("Installing snapshot: %v", segment)
+	//if err := c.streamSnapshotSegment(data, segment); err != nil {
+	//req.Fail(err)
+	//return data, done, offset
+	//}
 
-//offset += len(segment.batch)
-//if offset < segment.size {
-//req.Ack(newResponse(c.term.Num, true))
-//return data, done, offset
-//}
+	//c.logger.Error("Successfully installed segment: [%v/%v]", offset, segment.Size)
 
-//select {
-//case r := <-done.Acked():
-//req.Ack(r)
-//case e := <-done.Failed():
-//req.Fail(e)
-//case <-c.ctrl.Closed():
-//req.Fail(ClosedError)
-//}
+	//offset += int64(len(segment.Batch))
+	//if offset < segment.Size {
+	//req.Ack(installSnapshotResponse{Term: c.term.Num, Success: true})
+	//return data, done, offset
+	//}
 
-//return nil, nil, 0
-//}
+	//select {
+	//case r := <-done.Acked():
+	//req.Ack(r)
+	//case e := <-done.Failed():
+	//req.Fail(e)
+	//case <-c.ctrl.Closed():
+	//req.Fail(ErrClosed)
+	//}
 
-//func (c *follower) handleRequestVote(req *common.Request) {
-//vote := req.Body().(requestVote)
+	//return nil, nil, 0
+}
 
-//c.logger.Debug("Handling request vote [%v]", vote)
+func (c *follower) handleRequestVote(req *chans.Request) {
+	vote := req.Body().(voteRequest)
 
-//// FIXME: Lots of duplicates here....condense down
+	c.logger.Debug("Handling request vote [%v]", vote)
 
-//// handle: previous term vote.  (immediately decline.)
-//if vote.term < c.term.Num {
-//req.Ack(newResponse(c.term.Num, false))
-//return
-//}
+	// FIXME: Lots of duplicates here....condense down
 
-//// handle: current term vote.  (accept if no vote and if candidate log is as long as ours)
-//maxIndex, maxTerm, err := c.replica.Log.Last()
-//if err != nil {
-//req.Ack(newResponse(c.term.Num, false))
-//return
-//}
+	// handle: previous term vote.  (immediately decline.)
+	if vote.Term < c.term.Num {
+		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
+		return
+	}
 
-//c.logger.Debug("Current log max: %v", maxIndex)
-//if vote.term == c.term.Num {
-//if c.term.VotedFor == nil && vote.maxLogIndex >= maxIndex && vote.maxLogTerm >= maxTerm {
-//c.logger.Debug("Voting for candidate [%v]", vote.id)
-//req.Ack(newResponse(c.term.Num, true))
-//c.replica.Term(c.term.Num, nil, &vote.id) // correct?
-//becomeFollower(c.replica)
-//c.ctrl.Close()
-//return
-//}
+	// handle: current term vote.  (accept if no vote and if candidate log is as long as ours)
+	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
+	if err != nil {
+		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
+		return
+	}
 
-//c.logger.Debug("Rejecting candidate vote [%v]", vote.id)
-//req.Ack(newResponse(c.term.Num, false))
-//becomeCandidate(c.replica)
-//c.ctrl.Close()
-//return
-//}
+	c.logger.Debug("Current log max: %v", maxIndex)
+	if vote.Term == c.term.Num {
+		if c.term.VotedFor == nil && vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
+			c.logger.Debug("Voting for candidate [%v]", vote.Id)
+			req.Ack(voteResponse{Term: vote.Term, Granted: true})
+			c.replica.SetTerm(vote.Term, nil, &vote.Id) // correct?
+			becomeFollower(c.replica)
+			c.ctrl.Close()
+			return
+		}
 
-//// handle: future term vote.  (move to new term.  only accept if candidate log is long enough)
-//if vote.maxLogIndex >= maxIndex && vote.maxLogTerm >= maxTerm {
-//c.logger.Debug("Voting for candidate [%v]", vote.id)
-//req.Ack(newResponse(vote.term, true))
-//c.replica.Term(vote.term, nil, &vote.id)
-//becomeFollower(c.replica)
-//c.ctrl.Close()
-//return
-//}
+		c.logger.Debug("Rejecting candidate vote [%v]", vote.Id)
+		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		becomeCandidate(c.replica)
+		c.ctrl.Close()
+		return
+	}
 
-//c.logger.Debug("Rejecting candidate vote [%v]", vote.id)
-//req.Ack(newResponse(vote.term, false))
-//c.replica.Term(vote.term, nil, nil)
-//becomeCandidate(c.replica)
-//c.ctrl.Close()
-//}
+	// handle: future term vote.  (move to new term.  only accept if candidate log is long enough)
+	if vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
+		c.logger.Debug("Voting for candidate [%v]", vote.Id)
+		req.Ack(voteResponse{Term: vote.Term, Granted: true})
+		c.replica.SetTerm(vote.Term, nil, &vote.Id)
+		becomeFollower(c.replica)
+		c.ctrl.Close()
+		return
+	}
 
-//func (c *follower) handleReplication(req *common.Request) {
-//append := req.Body().(replicate)
+	c.logger.Debug("Rejecting candidate vote [%v]", vote.Id)
+	req.Ack(voteResponse{Term: vote.Term, Granted: false})
+	c.replica.SetTerm(vote.Term, nil, nil)
+	becomeCandidate(c.replica)
+	c.ctrl.Close()
+}
 
-//if append.term < c.term.Num {
-//req.Ack(newResponse(c.term.Num, true))
-//return
-//}
+func (c *follower) handleReplication(req *chans.Request) {
+	repl := req.Body().(replicateRequest)
+	if repl.Term < c.term.Num {
+		req.Ack(replicateResponse{Term: c.term.Num, Success: false})
+		return
+	}
 
-//hint, _, err := c.replica.Log.Last()
-//if err != nil {
-//req.Fail(err)
-//return
-//}
+	hint, _, err := c.replica.Log.LastIndexAndTerm()
+	if err != nil {
+		req.Fail(err)
+		return
+	}
 
-//c.logger.Debug("Handling replication: %v", append)
-//if append.term > c.term.Num || c.term.Leader == nil {
-//c.logger.Info("New leader detected [%v]", append.id)
-//req.Ack(newResponseWithHint(append.term, false, hint))
-//c.replica.Term(append.term, &append.id, &append.id)
-//becomeFollower(c.replica)
-//c.ctrl.Close()
-//return
-//}
+	c.logger.Debug("Handling replication: %v", repl)
+	if repl.Term > c.term.Num || c.term.LeaderId == nil {
+		c.logger.Info("New leader detected [%v]", repl.LeaderId)
+		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
+		c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
+		becomeFollower(c.replica)
+		c.ctrl.Close()
+		return
+	}
 
-//// if this is a heartbeat, bail out
-//c.replica.Log.Commit(append.commit)
-//if len(append.items) == 0 {
-//req.Ack(newResponse(append.term, true))
-//return
-//}
+	// if this is a heartbeat, bail out
+	if len(repl.Items) == 0 {
+		req.Ack(replicateResponse{Term: repl.Term, Success: true})
+		return
+	}
 
-//// consistency check
-//ok, err := c.replica.Log.Assert(append.prevLogIndex, append.prevLogTerm)
-//if err != nil {
-//req.Fail(err)
-//return
-//}
+	// consistency check
+	ok, err := c.replica.Log.Assert(repl.PrevLogIndex, repl.PrevLogTerm)
+	if err != nil {
+		req.Fail(err)
+		return
+	}
 
-//// consistency check failed.
-//if !ok {
-//c.logger.Debug("Consistency check failed. Responding with hint [%v]", hint)
-//req.Ack(newResponseWithHint(append.term, false, hint))
-//return
-//}
+	// consistency check failed.
+	if !ok {
+		c.logger.Debug("Consistency check failed. Responding with hint [%v]", hint)
+		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
+		return
+	}
 
-//// insert items.
-//c.replica.Log.Truncate(append.prevLogIndex + 1)
-//if err := c.replica.Log.Insert(append.items); err != nil {
-//c.logger.Error("Error inserting batch: %v", err)
-//req.Fail(err)
-//return
-//}
+	// insert items.
+	if err := c.replica.Log.Insert(repl.Items); err != nil {
+		c.logger.Error("Error inserting batch: %v", err)
+		req.Fail(err)
+		return
+	}
 
-//req.Ack(newResponse(append.term, true))
-//}
+	if _, err := c.replica.Log.Commit(repl.Commit); err != nil {
+		c.logger.Info("Error committing offset: %v", err)
+	}
 
-//func (c *follower) startSnapshotStream(s installSnapshot) (chan<- Event, *common.Request) {
-//data := make(chan Event)
-//resp := common.NewRequest(nil)
-//go func() {
-//snapshot, err := c.replica.Log.NewSnapshot(s.maxIndex, s.maxTerm, data, s.size, s.config)
-//if err != nil {
-//c.logger.Error("Error installing snapshot: %+v", err)
-//resp.Fail(err)
-//return
-//}
-
-//err = c.replica.Log.Install(snapshot)
-//if err != nil {
-//c.logger.Error("Error installing snapshot: %+v", err)
-//resp.Fail(err)
-//return
-//}
-
-//resp.Ack(newResponse(c.term.Num, true))
-//}()
-//return data, resp
-//}
-
-//func (c *follower) streamSnapshotSegment(data chan<- Event, s installSnapshot) error {
-//timer := time.NewTimer(c.replica.RequestTimeout)
-//for i := 0; i < len(s.batch); i++ {
-//select {
-//case <-timer.C:
-//return errors.Wrapf(common.TimeoutError, "Timed out writing segment [%v]: [%v]", c.replica.RequestTimeout, s)
-//case <-c.ctrl.Closed():
-//return errors.Wrapf(common.ClosedError, "Unable to stream segment [%v]", s)
-//case data <- s.batch[i]:
-//}
-//}
-//return nil
-//}
+	req.Ack(replicateResponse{Term: repl.Term, Success: true})
+}

@@ -1,93 +1,64 @@
 package raft
 
-//func NewEventChannel(arr []Event) <-chan Event {
-//ch := make(chan Event)
-//go func() {
-//defer close(ch)
-//for _, i := range arr {
-//ch <- i
-//}
-//}()
-//return ch
-//}
+import "github.com/pkopriv2/golang-sdk/lang/context"
 
-//func CollectEvents(ch <-chan Event, exp int) ([]Event, error) {
-//ret := make([]Event, 0, exp)
-//for i := 1; i <= exp; i++ {
-//e, ok := <-ch
-//if !ok {
-//return nil, errors.Wrapf(EndOfStreamError, "Expected [%v] events.  Only received [%v]", exp, i)
-//}
+type snapshotStream struct {
+	ctrl     context.Control
+	snapshot StoredSnapshot
+	buf      int64
+	ch       chan Event
+}
 
-//ret = append(ret, e)
-//}
-//return ret, nil
-//}
+func newSnapshotStream(ctrl context.Control, snapshot StoredSnapshot, buf int64) *snapshotStream {
+	l := &snapshotStream{
+		ctrl:     ctrl.Sub(),
+		snapshot: snapshot,
+		buf:      buf,
+		ch:       make(chan Event, buf),
+	}
+	l.start()
+	return l
+}
 
-//func streamSnapshot(ctrl common.Control, snapshot StoredSnapshot, buf int) *snapshotStream {
-//return newSnapshotStream(ctrl, snapshot, buf)
-//}
+func (l *snapshotStream) start() {
+	go func() {
+		defer l.Close()
 
-//type snapshotStream struct {
-//ctrl     common.Control
-//snapshot StoredSnapshot
-//buf      int
-//ch       chan Event
-//}
+		for i := int64(0); i < l.snapshot.Size(); {
+			if l.ctrl.IsClosed() {
+				return
+			}
 
-//func newSnapshotStream(ctrl common.Control, snapshot StoredSnapshot, buf int) *snapshotStream {
-//l := &snapshotStream{
-//ctrl:     ctrl.Sub(),
-//snapshot: snapshot,
-//buf:      buf,
-//ch:       make(chan Event, buf),
-//}
-//l.start()
-//return l
-//}
+			// scan the next batch
+			batch, err := l.snapshot.Scan(i, min(i+l.buf, l.snapshot.Size()))
+			if err != nil {
+				l.ctrl.Fail(err)
+				return
+			}
 
-//func (l *snapshotStream) start() {
-//go func() {
-//defer l.Close()
+			// start emitting
+			for _, e := range batch {
+				select {
+				case <-l.ctrl.Closed():
+					return
+				case l.ch <- e:
+				}
+			}
 
-//for i := 0; i < l.snapshot.Size(); {
-//if l.ctrl.IsClosed() {
-//return
-//}
+			// update current
+			i = i + int64(len(batch))
+		}
+	}()
+}
 
-//beg := i
-//end := common.Min(l.snapshot.Size()-1, beg+l.buf)
+func (l *snapshotStream) Close() error {
+	return l.ctrl.Close()
+}
 
-//// scan the next batch
-//batch, err := l.snapshot.Scan(beg, end)
-//if err != nil {
-//l.ctrl.Fail(err)
-//return
-//}
+func (l *snapshotStream) Ctrl() context.Control {
+	return l.ctrl
+}
 
-//// start emitting
-//for _, e := range batch {
-//select {
-//case <-l.ctrl.Closed():
-//return
-//case l.ch <- e:
-//}
-//}
-
-//// update current
-//i = i + len(batch)
-//}
-//}()
-//}
-
-//func (l *snapshotStream) Close() error {
-//return l.ctrl.Close()
-//}
-
-//func (l *snapshotStream) Ctrl() common.Control {
-//return l.ctrl
-//}
-
-//func (l *snapshotStream) Data() <-chan Event {
-//return l.ch
-//}
+func (l *snapshotStream) Data() <-chan Event {
+	return l.ch
+}

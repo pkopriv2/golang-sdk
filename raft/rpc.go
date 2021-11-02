@@ -16,13 +16,13 @@ const (
 )
 
 type statusResponse struct {
-	LeaderId uuid.UUID `json:"leader_id"`
-	Term     term      `json:"term"`
-	Config   Config    `json:"config"`
+	LeaderId *uuid.UUID `json:"leader_id"`
+	Term     term       `json:"term"`
+	Config   Config     `json:"config"`
 }
 
 type readBarrierResponse struct {
-	Barrier int `json:"barrier"`
+	Barrier int64 `json:"barrier"`
 }
 
 type rosterUpdateRequest struct {
@@ -36,27 +36,27 @@ type rosterUpdateRequest struct {
 // Append events ONLY come from members who are leaders. (Or think they are leaders)
 type replicateRequest struct {
 	LeaderId     uuid.UUID `json:"leader_id"`
-	Term         int       `json:"term"`
-	PrevLogIndex int       `json:"prev_log_index"`
-	PrevLogTerm  int       `json:"prev_log_term"`
+	Term         int64     `json:"term"`
+	PrevLogIndex int64     `json:"prev_log_index"`
+	PrevLogTerm  int64     `json:"prev_log_term"`
 	Items        []Entry   `json:"items"`
-	Commit       int       `json:"commit"`
+	Commit       int64     `json:"commit"`
 }
 
 // Internal response type.  These are returned through the
 // request 'ack'/'response' channels by the currently active
 // sub-machine component.
 type replicateResponse struct {
-	Term    int  `json:"term"`
-	Success bool `json:"success"`
-	Hint    int  `json:"hint"` // used for fast agreemnt
+	Term    int64 `json:"term"`
+	Success bool  `json:"success"`
+	Hint    int64 `json:"hint"` // used for fast agreemnt
 }
 
-func newHeartBeat(id uuid.UUID, term int, commit int) replicateRequest {
+func newHeartBeat(id uuid.UUID, term int64, commit int64) replicateRequest {
 	return replicateRequest{id, term, -1, -1, []Entry{}, commit}
 }
 
-func newReplication(id uuid.UUID, term int, prevIndex int, prevTerm int, items []Entry, commit int) replicateRequest {
+func newReplication(id uuid.UUID, term int64, prevIndex int64, prevTerm int64, items []Entry, commit int64) replicateRequest {
 	return replicateRequest{id, term, prevIndex, prevTerm, items, commit}
 }
 
@@ -81,8 +81,8 @@ type voteResponse struct {
 //
 // These come from active clients.
 type appendEventRequest struct {
-	Event Event `json:"event"`
-	Kind  Kind  `json:"kind"`
+	Event []byte `json:"event"`
+	Kind  Kind   `json:"kind"`
 }
 
 // append event response type.
@@ -103,5 +103,6 @@ type installSnapshotRequest struct {
 }
 
 type installSnapshotResponse struct {
-	Term int64 `json:"term"`
+	Term    int64 `json:"term"`
+	Success bool  `json:"success"`
 }

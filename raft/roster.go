@@ -63,7 +63,7 @@ func (r *rosterManager) start() {
 		for {
 			r.logger.Info("Rebuilding roster")
 
-			peers, until, err := r.reloadRoster()
+			peers, max, err := r.reloadRosterFromSnapshot()
 			if err != nil {
 				r.self.ctrl.Fail(err)
 				return
@@ -71,14 +71,14 @@ func (r *rosterManager) start() {
 
 			r.self.Roster.Set(peers)
 
-			appends, err := r.listenAppends(until + 1)
+			appends, err := r.listenAppends(max + 1)
 			if err != nil {
 				r.self.ctrl.Fail(err)
 				return
 			}
 			defer appends.Close()
 
-			commits, err := r.listenCommits(until + 1)
+			commits, err := r.listenCommits(max + 1)
 			if err != nil {
 				r.self.ctrl.Fail(err)
 				return
@@ -147,7 +147,7 @@ func (r *rosterManager) start() {
 	}()
 }
 
-func (r *rosterManager) reloadRoster() ([]Peer, int64, error) {
+func (r *rosterManager) reloadRosterFromSnapshot() ([]Peer, int64, error) {
 	snapshot, err := r.self.Log.Snapshot()
 	if err != nil {
 		return nil, 0, errors.Wrapf(err, "Error getting snapshot")

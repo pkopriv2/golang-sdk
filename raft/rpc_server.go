@@ -5,6 +5,7 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 	"github.com/pkopriv2/golang-sdk/rpc"
+	uuid "github.com/satori/go.uuid"
 )
 
 type rpcServer struct {
@@ -37,9 +38,15 @@ func newServer(ctx context.Context, self *replica, listener net.Listener, worker
 }
 
 func (s *rpcServer) Status(req rpc.Request) rpc.Response {
+	leader := s.self.Leader()
+
+	var leaderId *uuid.UUID = nil
+	if leader != nil {
+		leaderId = &leader.Id
+	}
 	return rpc.NewStructResponse(s.enc,
 		statusResponse{
-			LeaderId: s.self.Id,
+			LeaderId: leaderId,
 			Term:     s.self.CurrentTerm(),
 			Config:   Config{s.self.Cluster()}})
 }

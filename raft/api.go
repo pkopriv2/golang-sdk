@@ -123,45 +123,39 @@ import (
 
 // Core api errors
 var (
-	ClosedError    = errors.New("Kayak:ClosedError")
-	NotLeaderError = errors.New("Kayak:NotLeaderError")
-	NotSlaveError  = errors.New("Kayak:NotSlaveError")
-	NoLeaderError  = errors.New("Kayak:NoLeaderError")
+	ErrClosed      = errors.New("Raft:ErrClosed")
+	ErrNotLeader   = errors.New("Raft:ErrNotLeader")
+	ErrNotFollower = errors.New("Raft:ErrNotFollower")
+	ErrNoLeader    = errors.New("Raft:ErrNoLeader")
 )
 
-//// Starts the first member of a kayak cluster.  The given addr MUST be routable by external members
-//func Start(ctx context.Context, addr string, fns ...func(*Options)) (Host, error) {
-//opts, err := buildOptions(ctx, fns)
-//if err != nil {
-//return nil, errors.WithStack(err)
-//}
+// Starts the first member of a raft cluster.  The given addr MUST be routable by external members
+func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
+	opts := buildOptions(fns...)
 
-//host, err := newHost(ctx, opts.net, opts.logStore, opts.storage, addr)
-//if err != nil {
-//return nil, errors.WithStack(err)
-//}
+	host, err := newHost(ctx, addr, opts)
+	if err != nil {
+		return nil, errors.Wrap(err, "Unable to initialize host")
+	}
 
-//return host, host.Start()
-//}
+	return host, host.Start()
+}
 
-//// Joins a newly initialized member to an existing Kayak cluster.
-//func Join(ctx context.Context, addr string, peers []string, fns ...func(*Options)) (Host, error) {
-//opts, err := buildOptions(ctx, fns)
-//if err != nil {
-//return nil, errors.WithStack(err)
-//}
+// Joins a newly initialized member to an existing Kayak cluster.
+func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host, error) {
+	opts := buildOptions(fns...)
 
-//host, err := newHost(ctx, opts.net, opts.logStore, opts.storage, addr)
-//if err != nil {
-//return nil, err
-//}
-//defer ctx.Control().Defer(func(error) {
-//host.Close()
-//})
+	host, err := newHost(ctx, addr, opts)
+	if err != nil {
+		return nil, errors.Wrap(err, "Unable to initialize host")
+	}
+	defer ctx.Control().Defer(func(error) {
+		host.Close()
+	})
 
-//// FIXME: use all peer addrs.
-//return host, host.Join(peers[0])
-//}
+	// FIXME: use all peer addrs.
+	return host, host.Join(peers[0])
+}
 
 type Kind int
 
@@ -270,12 +264,6 @@ type Log interface {
 
 	// Compact replaces the log until the given point with the given snapshot
 	//
-	// In order to guard against premature termination of a snapshot, the
-	// consumer must provide the log with an expectation of the snapshot size.
-	// Only once all items in the snapshot have been stored can the snapshot
-	// take effect.  If the snapshot stream is terminated prematurely,
-	// the compaction will abort.
-	//
 	// Once the snapshot has been safely stored, the log until and including
 	// the index will be deleted. This method is synchronous, but can be called
 	// concurrent to other log methods. It should be considered safe for the
@@ -299,7 +287,8 @@ type EventStream interface {
 	Data() <-chan Event
 }
 
-// Returns a channel that returns all the events in the batch
+// Returns a channel that returns all the events in the batch.  The
+// channel is closed once all items have been received by the channel
 func newEventChannel(batch []Event) (ret <-chan Event) {
 	ch := make(chan Event)
 	go func() {

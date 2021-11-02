@@ -2,9 +2,10 @@ package raft
 
 import (
 	"fmt"
-	"time"
+	"io"
 
-	"github.com/pkopriv2/golang-sdk/lang/net"
+	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/pkopriv2/golang-sdk/lang/pool"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -72,22 +73,12 @@ func (peers Peers) Equals(o Peers) bool {
 	return true
 }
 
-func (p Peer) ClientPool(network net.Network, timeout time.Duration, num int) net.ConnectionPool {
-	return net.NewConnectionPool(num, timeout, func(timeout time.Duration) (net.Connection, error) {
-		return network.Dial(timeout, p.Addr)
+func (p Peer) ClientPool(ctrl context.Control, opts Options) pool.ObjectPool {
+	return pool.NewObjectPool(ctrl, opts.MaxConns, func() (io.Closer, error) {
+		return p.Dial(opts)
 	})
 }
 
-//func (p Peer) Client(ctx common.Context, network net.Network, timeout time.Duration) (*rpcClient, error) {
-//raw, err := network.Dial(timeout, p.Addr)
-//if raw == nil || err != nil {
-//return nil, errors.Wrapf(err, "Error connecting to peer [%v]", p)
-//}
-
-//cl, err := net.NewClient(ctx, raw, net.Json)
-//if cl == nil || err != nil {
-//return nil, err
-//}
-
-//return &rpcClient{cl}, nil
-//}
+func (p Peer) Dial(opts Options) (*rpcClient, error) {
+	return dialRpcClient(opts.Network, opts.DialTimeout, p.Addr, opts.Encoder)
+}

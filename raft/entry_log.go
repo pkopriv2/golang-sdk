@@ -80,8 +80,8 @@ func (e *entryLog) Scan(start int64, end int64) ([]Entry, error) {
 	return e.raw.Scan(start, end)
 }
 
-func (e *entryLog) Append(evt Event, term int64, k Kind) (Entry, error) {
-	item, err := e.raw.Append(evt, term, k)
+func (e *entryLog) Append(payload []byte, term int64, k Kind) (Entry, error) {
+	item, err := e.raw.Append(payload, term, k)
 	if err != nil {
 		return item, err
 	}
@@ -189,7 +189,7 @@ func (e *entryLog) LastIndexAndTerm() (int64, int64, error) {
 
 func (e *entryLog) ListenCommits(start int64, buf int64) (Listener, error) {
 	if e.ctrl.IsClosed() {
-		return nil, errors.WithStack(ClosedError)
+		return nil, errors.WithStack(ErrClosed)
 	}
 
 	return newRefListener(e, e.commit, start, buf), nil
@@ -197,7 +197,7 @@ func (e *entryLog) ListenCommits(start int64, buf int64) (Listener, error) {
 
 func (e *entryLog) ListenAppends(start int64, buf int64) (Listener, error) {
 	if e.ctrl.IsClosed() {
-		return nil, errors.WithStack(ClosedError)
+		return nil, errors.WithStack(ErrClosed)
 	}
 
 	return newRefListener(e, e.head, start, buf), nil

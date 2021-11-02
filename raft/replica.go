@@ -2,16 +2,16 @@ package raft
 
 import (
 	"fmt"
+	"io"
 	"math/rand"
 	"sync"
 	"time"
 
-	"github.com/boltdb/bolt"
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/chans"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
-	"github.com/pkopriv2/golang-sdk/lang/net"
+	"github.com/pkopriv2/golang-sdk/lang/pool"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -33,17 +33,8 @@ type replica struct {
 	// the control (de-normalized from Ctx.Control())
 	ctrl context.Control
 
-	// the unique id of this member. (copied for brevity from self)
-	Id uuid.UUID
-
 	// the peer representing the local instance
 	Self Peer
-
-	// the networking abstraction
-	Network net.Network
-
-	// the core database
-	Db *bolt.DB
 
 	// the current cluster configuration
 	Roster *roster
@@ -51,22 +42,20 @@ type replica struct {
 	// the event log.
 	Log *entryLog
 
+	// the durable term store.
+	Terms *termStore
+
 	// data lock (currently using very coarse lock)
 	lock sync.RWMutex
 
 	// the current term.
 	term term
 
-	// the durable term store.
-	terms *termStore
+	// The core options for the replica
+	Options Options
 
-	// the election timeout.  (heartbeat: = timeout / 5)
+	// the election timeout.  usually a random offset from a shared value
 	ElectionTimeout time.Duration
-
-	// connection related timeouts
-	DialTimeout time.Duration
-	ReadTimeout time.Duration
-	SendTimeout time.Duration
 
 	// read barrier request
 	Barrier chan *chans.Request
@@ -90,12 +79,7 @@ type replica struct {
 	RosterUpdates chan *chans.Request
 }
 
-func newReplica(ctx context.Context, net net.Network, store LogStore, db *bolt.DB, addr string, opts Options) (*replica, error) {
-
-	termStore, err := openTermStore(db)
-	if err != nil {
-		return nil, errors.Wrapf(err, "Error retrieving term store")
-	}
+func newReplica(ctx context.Context, store LogStore, termStore *termStore, addr string, opts Options) (*replica, error) {
 
 	id, err := getOrCreateReplicaId(termStore, addr)
 	if err != nil {
@@ -106,7 +90,7 @@ func newReplica(ctx context.Context, net net.Network, store LogStore, db *bolt.D
 	ctx = ctx.Sub("%v", self)
 	ctx.Logger().Info("Starting replica.")
 
-	log, err := getOrCreateStore(ctx, store, self)
+	log, err := getOrCreateLog(ctx, store, self)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Error retrieving durable log [%v]", id)
 	}
@@ -128,13 +112,10 @@ func newReplica(ctx context.Context, net net.Network, store LogStore, db *bolt.D
 		Ctx:             ctx,
 		logger:          ctx.Logger(),
 		ctrl:            ctx.Control(),
-		Id:              id,
 		Self:            self,
-		terms:           termStore,
+		Terms:           termStore,
 		Log:             log,
-		Db:              db,
 		Roster:          roster,
-		Network:         net,
 		Barrier:         make(chan *chans.Request),
 		Replications:    make(chan *chans.Request),
 		VoteRequests:    make(chan *chans.Request),
@@ -143,61 +124,59 @@ func newReplica(ctx context.Context, net net.Network, store LogStore, db *bolt.D
 		Snapshots:       make(chan *chans.Request),
 		RosterUpdates:   make(chan *chans.Request),
 		ElectionTimeout: opts.ElectionTimeout + rndmElectionTimeout,
-		DialTimeout:     opts.DialTimeout,
-		ReadTimeout:     opts.ReadTimeout,
-		SendTimeout:     opts.SendTimeout,
+		Options:         opts,
 	}
 	return r, r.start()
 }
 
-func (h *replica) Close() error {
-	return h.ctrl.Close()
+func (r *replica) Close() error {
+	return r.ctrl.Close()
 }
 
-func (h *replica) start() error {
+func (r *replica) start() error {
 	// retrieve the term from the durable store
-	term, _, err := h.terms.Get(h.Self.Id)
+	term, _, err := r.Terms.Get(r.Self.Id)
 	if err != nil {
 		return err
 	}
 
 	// set the term from durable storage.
-	if err := h.Term(term.Num, term.LeaderId, term.VotedFor); err != nil {
+	if err := r.SetTerm(term.Num, term.LeaderId, term.VotedFor); err != nil {
 		return err
 	}
 
-	//listenRosterChanges(h)
+	listenRosterChanges(r)
 	return nil
 }
 
-func (h *replica) String() string {
-	h.lock.RLock()
-	defer h.lock.RUnlock()
-	return fmt.Sprintf("%v, %v:", h.Self, h.term)
+func (r *replica) String() string {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	return fmt.Sprintf("%v, %v:", r.Self, r.term)
 }
 
-func (h *replica) Term(num int64, leader *uuid.UUID, vote *uuid.UUID) error {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-	h.term = term{num, leader, vote}
-	h.logger.Info("Durably storing updated term [%v]", h.term)
-	return h.terms.Save(h.Id, h.term)
+func (r *replica) SetTerm(num int64, leader *uuid.UUID, vote *uuid.UUID) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.term = term{num, leader, vote}
+	r.logger.Info("Durably storing updated term [%v]", r.term)
+	return r.Terms.Save(r.Self.Id, r.term)
 }
 
-func (h *replica) CurrentTerm() term {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-	return h.term // i assume return is bound prior to the deferred function....
+func (r *replica) CurrentTerm() term {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	return r.term
 }
 
-func (h *replica) Cluster() []Peer {
-	all, _ := h.Roster.Get()
+func (r *replica) Cluster() Peers {
+	all, _ := r.Roster.Get()
 	return all
 }
 
-func (h *replica) Leader() *Peer {
-	if term := h.CurrentTerm(); term.LeaderId != nil {
-		peer, found := h.Peer(*term.LeaderId)
+func (r *replica) Leader() *Peer {
+	if term := r.CurrentTerm(); term.LeaderId != nil {
+		peer, found := r.FindPeer(*term.LeaderId)
 		if !found {
 			return nil
 		} else {
@@ -207,8 +186,8 @@ func (h *replica) Leader() *Peer {
 	return nil
 }
 
-func (h *replica) Peer(id uuid.UUID) (Peer, bool) {
-	for _, p := range h.Cluster() {
+func (r *replica) FindPeer(id uuid.UUID) (Peer, bool) {
+	for _, p := range r.Cluster() {
 		if p.Id == id {
 			return p, true
 		}
@@ -216,40 +195,52 @@ func (h *replica) Peer(id uuid.UUID) (Peer, bool) {
 	return Peer{}, false
 }
 
-func (h *replica) Others() []Peer {
-	cluster := h.Cluster()
+func (r *replica) Others() []Peer {
+	cluster := r.Cluster()
+
 	others := make([]Peer, 0, len(cluster))
 	for _, p := range cluster {
-		if p.Id != h.Self.Id {
+		if p.Id != r.Self.Id {
 			others = append(others, p)
 		}
 	}
 	return others
 }
 
-func (h *replica) Majority() int {
-	return majority(len(h.Cluster()))
+func (r *replica) Majority() int {
+	return majority(len(r.Cluster()))
 }
 
-//func (h *replica) Broadcast(fn func(c *rpcClient) response) <-chan response {
-//peers := h.Others()
-//ret := make(chan response, len(peers))
-//for _, p := range peers {
-//go func(p Peer) {
-//cl, err := p.Client(h.Ctx, h.Network, h.ConnTimeout)
-//if cl == nil || err != nil {
-//ret <- newResponse(h.term.Num, false)
-//return
-//}
+type broadCastResponse struct {
+	Err error
+	Val interface{}
+}
 
-//defer cl.Close()
-//ret <- fn(cl)
-//}(p)
-//}
-//return ret
-//}
+func (r *replica) Broadcast(fn func(c *rpcClient) (interface{}, error)) <-chan broadCastResponse {
+	peers := r.Others()
+	ret := make(chan broadCastResponse, len(peers))
+	for _, p := range peers {
+		go func(p Peer) {
+			cl, err := p.Dial(r.Options)
+			if err != nil {
+				ret <- broadCastResponse{Err: err}
+				return
+			}
 
-func (h *replica) sendRequest(ch chan<- *chans.Request, timeout time.Duration, val interface{}) (interface{}, error) {
+			defer cl.Close()
+			val, err := fn(cl)
+			if err != nil {
+				ret <- broadCastResponse{Err: err}
+				return
+			}
+
+			ret <- broadCastResponse{Val: val}
+		}(p)
+	}
+	return ret
+}
+
+func (r *replica) sendRequest(ch chan<- *chans.Request, timeout time.Duration, val interface{}) (interface{}, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
@@ -257,13 +248,13 @@ func (h *replica) sendRequest(ch chan<- *chans.Request, timeout time.Duration, v
 	defer req.Cancel()
 
 	select {
-	case <-h.ctrl.Closed():
+	case <-r.ctrl.Closed():
 		return nil, errors.WithStack(errs.ClosedError)
 	case <-timer.C:
 		return nil, errors.Wrapf(errs.TimeoutError, "Request timed out waiting for machine to accept [%v]", timeout)
 	case ch <- req:
 		select {
-		case <-h.ctrl.Closed():
+		case <-r.ctrl.Closed():
 			return nil, errors.WithStack(errs.ClosedError)
 		case r := <-req.Acked():
 			return r, nil
@@ -275,98 +266,94 @@ func (h *replica) sendRequest(ch chan<- *chans.Request, timeout time.Duration, v
 	}
 }
 
-func (h *replica) AddPeer(peer Peer) error {
-	return h.UpdateRoster(rosterUpdateRequest{peer, true})
+func (r *replica) AddPeer(peer Peer) error {
+	return r.UpdateRoster(rosterUpdateRequest{peer, true})
 }
 
-func (h *replica) DelPeer(peer Peer) error {
-	return h.UpdateRoster(rosterUpdateRequest{peer, false})
+func (r *replica) DelPeer(peer Peer) error {
+	return r.UpdateRoster(rosterUpdateRequest{peer, false})
 }
 
-func (h *replica) Append(event Event, kind Kind) (Entry, error) {
-	return h.LocalAppend(appendEventRequest{event, kind})
+func (r *replica) Append(event Event, kind Kind) (Entry, error) {
+	return r.LocalAppend(appendEventRequest{event, kind})
 }
 
-func (h *replica) Listen(start int64, buf int64) (Listener, error) {
-	return h.Log.ListenCommits(start, buf)
+func (r *replica) Listen(start int64, buf int64) (Listener, error) {
+	return r.Log.ListenCommits(start, buf)
 }
 
-func (h *replica) Compact(until int64, data <-chan Event) error {
-	return h.Log.Compact(until, data, Config{h.Cluster()})
+func (r *replica) Compact(until int64, data <-chan Event) error {
+	return r.Log.Compact(until, data, Config{r.Cluster()})
 }
 
-func (h *replica) UpdateRoster(update rosterUpdateRequest) error {
-	_, err := h.sendRequest(h.RosterUpdates, 30*time.Second, update)
+func (r *replica) UpdateRoster(update rosterUpdateRequest) error {
+	_, err := r.sendRequest(r.RosterUpdates, 30*time.Second, update)
 	return err
 }
 
-func (h *replica) ReadBarrier() (int, error) {
-	val, err := h.sendRequest(h.Barrier, h.ReadTimeout, nil)
+func (r *replica) ReadBarrier() (int64, error) {
+	val, err := r.sendRequest(r.Barrier, r.Options.ReadTimeout, nil)
 	if err != nil {
 		return 0, err
 	}
-	return val.(int), nil
+	return val.(int64), nil
 }
 
-func (h *replica) InstallSnapshot(snapshot installSnapshotRequest) (installSnapshotResponse, error) {
-	val, err := h.sendRequest(h.Snapshots, h.ReadTimeout, snapshot)
+func (r *replica) InstallSnapshot(snapshot installSnapshotRequest) (installSnapshotResponse, error) {
+	val, err := r.sendRequest(r.Snapshots, r.Options.ReadTimeout, snapshot)
 	if err != nil {
 		return installSnapshotResponse{}, err
 	}
 	return val.(installSnapshotResponse), nil
 }
 
-func (h *replica) Replicate(r replicateRequest) (replicateResponse, error) {
-	val, err := h.sendRequest(h.Replications, h.ReadTimeout, r)
+func (r *replica) Replicate(req replicateRequest) (replicateResponse, error) {
+	val, err := r.sendRequest(r.Replications, r.Options.ReadTimeout, req)
 	if err != nil {
 		return replicateResponse{}, err
 	}
 	return val.(replicateResponse), nil
 }
 
-func (h *replica) RequestVote(vote voteRequest) (voteResponse, error) {
-	val, err := h.sendRequest(h.VoteRequests, h.ReadTimeout, vote)
+func (r *replica) RequestVote(vote voteRequest) (voteResponse, error) {
+	val, err := r.sendRequest(r.VoteRequests, r.Options.ReadTimeout, vote)
 	if err != nil {
 		return voteResponse{}, err
 	}
 	return val.(voteResponse), nil
 }
 
-func (h *replica) RemoteAppend(event appendEventRequest) (Entry, error) {
-	val, err := h.sendRequest(h.RemoteAppends, h.ReadTimeout, event)
+func (r *replica) RemoteAppend(event appendEventRequest) (Entry, error) {
+	val, err := r.sendRequest(r.RemoteAppends, r.Options.ReadTimeout, event)
 	if err != nil {
 		return Entry{}, err
 	}
 	return val.(Entry), nil
 }
 
-func (h *replica) LocalAppend(event appendEventRequest) (Entry, error) {
-	val, err := h.sendRequest(h.LocalAppends, h.ReadTimeout, event)
+func (r *replica) LocalAppend(event appendEventRequest) (Entry, error) {
+	val, err := r.sendRequest(r.LocalAppends, r.Options.ReadTimeout, event)
 	if err != nil {
 		return Entry{}, err
 	}
 	return val.(Entry), nil
 }
 
-//func newLeaderPool(self *replica, size int) context.ObjectPool {
-//return context.NewObjectPool(self.Ctx.Control().Sub(), size, newLeaderConstructor(self))
-//}
+func newLeaderPool(self *replica, size int) pool.ObjectPool {
+	return pool.NewObjectPool(self.Ctx.Control(), size, func() (io.Closer, error) {
+		var cl *rpcClient
+		for cl == nil {
+			leader := self.Leader()
+			if leader == nil {
+				time.Sleep(self.ElectionTimeout / 5)
+				continue
+			}
 
-//func newLeaderConstructor(self *replica) func() (io.Closer, error) {
-//return func() (io.Closer, error) {
-//var cl *rpcClient
-//for cl == nil {
-//leader := self.Leader()
-//if leader == nil {
-//time.Sleep(self.ElectionTimeout / 5)
-//continue
-//}
-
-//cl, _ = leader.Client(self.Ctx, self.Network, self.ConnTimeout)
-//}
-//return cl, nil
-//}
-//}
+			cl, _ = leader.Dial(self.Options)
+		}
+		return cl, nil
+	})
+}
 
 func getOrCreateReplicaId(store *termStore, addr string) (uuid.UUID, error) {
 	id, ok, err := store.GetId(addr)
@@ -384,7 +371,7 @@ func getOrCreateReplicaId(store *termStore, addr string) (uuid.UUID, error) {
 	return id, nil
 }
 
-func getOrCreateStore(ctx context.Context, store LogStore, self Peer) (*entryLog, error) {
+func getOrCreateLog(ctx context.Context, store LogStore, self Peer) (*entryLog, error) {
 	raw, err := store.GetLog(self.Id)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Error opening stored log [%v]", self.Id)

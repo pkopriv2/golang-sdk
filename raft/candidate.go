@@ -1,142 +1,155 @@
 package raft
 
-//type candidate struct {
-//ctx     common.Context
-//ctrl    common.Control
-//logger  common.Logger
-//term    term
-//replica *replica
-//}
+import (
+	"time"
 
-//func becomeCandidate(replica *replica) {
-//// increment term and vote for self.
-//replica.Term(replica.term.Num+1, nil, &replica.Id)
+	"github.com/pkopriv2/golang-sdk/lang/chans"
+	"github.com/pkopriv2/golang-sdk/lang/context"
+)
 
-//ctx := replica.Ctx.Sub("Candidate(%v)", replica.CurrentTerm())
-//ctx.Logger().Info("Becoming candidate")
+type candidate struct {
+	ctx     context.Context
+	ctrl    context.Control
+	logger  context.Logger
+	term    term
+	replica *replica
+}
 
-//l := &candidate{
-//ctx:     ctx,
-//logger:  ctx.Logger(),
-//ctrl:    ctx.Control(),
-//term:    replica.CurrentTerm(),
-//replica: replica,
-//}
+func becomeCandidate(replica *replica) {
+	// increment term and vote for self.
+	replica.SetTerm(replica.term.Num+1, nil, &replica.Self.Id)
 
-//l.start()
-//}
+	ctx := replica.Ctx.Sub("Candidate(%v)", replica.CurrentTerm())
+	ctx.Logger().Info("Becoming candidate")
 
-//func (c *candidate) start() {
+	l := &candidate{
+		ctx:     ctx,
+		logger:  ctx.Logger(),
+		ctrl:    ctx.Control(),
+		term:    replica.CurrentTerm(),
+		replica: replica,
+	}
 
-//maxIndex, maxTerm, err := c.replica.Log.Last()
-//if err != nil {
-//c.ctrl.Fail(err)
-//becomeFollower(c.replica)
-//return
-//}
+	l.start()
+}
 
-//c.logger.Debug("Sending ballots: (t=%v,mi=%v,mt=%v)", c.term.Num, maxIndex, maxTerm)
-//ballots := c.replica.Broadcast(func(cl *rpcClient) response {
-//resp, err := cl.RequestVote(requestVote{c.replica.Id, c.term.Num, maxIndex, maxTerm})
-//if err != nil {
-//return newResponse(c.replica.term.Num, false)
-//} else {
-//return resp
-//}
-//})
+func (c *candidate) start() {
 
-//go func() {
-//defer c.ctrl.Close()
+	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
+	if err != nil {
+		c.ctrl.Fail(err)
+		becomeFollower(c.replica)
+		return
+	}
 
-//// set the election timer.
-//c.logger.Info("Setting timer [%v]", c.replica.ElectionTimeout)
-//timer := time.NewTimer(c.replica.ElectionTimeout)
+	c.logger.Debug("Sending ballots: (t=%v,mi=%v,mt=%v)", c.term.Num, maxIndex, maxTerm)
+	ballots := c.replica.Broadcast(func(cl *rpcClient) (interface{}, error) {
+		return cl.RequestVote(
+			voteRequest{
+				Id:          c.replica.Self.Id,
+				Term:        c.term.Num,
+				MaxLogIndex: maxIndex,
+				MaxLogTerm:  maxTerm,
+			})
+	})
 
-//for numVotes := 1; ! c.ctrl.IsClosed() ; {
-//c.logger.Info("Received [%v/%v] votes", numVotes, len(c.replica.Cluster()))
+	// Currently this is essentially a single-threaded implementation.
+	go func() {
+		defer c.ctrl.Close()
 
-//needed := c.replica.Majority()
-//if numVotes >= needed {
-//c.logger.Info("Acquired majority [%v] votes.", needed)
-//// c.replica.Term(c.replica.term.Num, &c.replica.Id, &c.replica.Id)
-//becomeLeader(c.replica)
-//return
-//}
+		// set the election timer.
+		c.logger.Info("Setting timer [%v]", c.replica.ElectionTimeout)
+		timer := time.NewTimer(c.replica.ElectionTimeout)
 
-//select {
-//case <-c.ctrl.Closed():
-//return
-//case <-c.replica.ctrl.Closed():
-//return
-//case req := <-c.replica.Replications:
-//c.handleAppendEvents(req)
-//case req := <-c.replica.VoteRequests:
-//c.handleRequestVote(req)
-//case <-timer.C:
-//c.logger.Info("Unable to acquire necessary votes [%v/%v]", numVotes, needed)
-//timer := time.NewTimer(c.replica.ElectionTimeout)
-//select {
-//case <-c.ctrl.Closed():
-//return
-//case <-timer.C:
-//becomeCandidate(c.replica)
-//return
-//}
-//case vote := <-ballots:
-//if vote.term > c.term.Num {
-//c.replica.Term(vote.term, nil, nil)
-//becomeFollower(c.replica)
-//return
-//}
+		for numVotes := 1; !c.ctrl.IsClosed(); {
+			c.logger.Info("Received [%v/%v] votes", numVotes, len(c.replica.Cluster()))
 
-//if vote.success {
-//numVotes++
-//}
-//}
-//}
-//}()
-//}
+			needed := c.replica.Majority()
+			if numVotes >= needed {
+				c.logger.Info("Acquired majority [%v] votes.", needed)
+				// c.replica.Term(c.replica.term.Num, &c.replica.Id, &c.replica.Id)
+				//becomeLeader(c.replica)
+				return
+			}
 
-//func (c *candidate) handleRequestVote(req *common.Request) {
-//vote := req.Body().(requestVote)
+			select {
+			case <-c.ctrl.Closed():
+				return
+			case <-c.replica.ctrl.Closed():
+				return
+			case req := <-c.replica.Replications:
+				c.handleReplication(req)
+			case req := <-c.replica.VoteRequests:
+				c.handleRequestVote(req)
+			case <-timer.C:
+				c.logger.Info("Unable to acquire necessary votes [%v/%v]", numVotes, needed)
+				timer := time.NewTimer(c.replica.ElectionTimeout)
+				select {
+				case <-c.ctrl.Closed():
+					return
+				case <-timer.C:
+					becomeCandidate(c.replica)
+					return
+				}
+			case resp := <-ballots:
+				if resp.Err != nil {
+					continue
+				}
 
-//c.logger.Debug("Handling *common.Request vote: %v", vote)
-//if vote.term <= c.term.Num {
-//req.Ack(newResponse(c.term.Num, false))
-//return
-//}
+				vote := resp.Val.(voteResponse)
+				if vote.Term > c.term.Num {
+					c.replica.SetTerm(vote.Term, nil, nil)
+					becomeFollower(c.replica)
+					return
+				}
 
-//maxIndex, maxTerm, err := c.replica.Log.Last()
-//if err != nil {
-//req.Ack(newResponse(c.replica.term.Num, false))
-//return
-//}
+				if vote.Granted {
+					numVotes++
+				}
+			}
+		}
+	}()
+}
 
-//if vote.maxLogIndex >= maxIndex && vote.maxLogTerm >= maxTerm {
-//c.logger.Debug("Voting for candidate [%v]", vote.id.String()[:8])
-//req.Ack(newResponse(vote.term, true))
-//c.replica.Term(vote.term, nil, &vote.id)
-//becomeFollower(c.replica)
-//c.ctrl.Close()
-//return
-//}
+func (c *candidate) handleRequestVote(req *chans.Request) {
+	vote := req.Body().(voteRequest)
 
-//c.logger.Debug("Rejecting candidate vote [%v]", vote.id.String()[:8])
-//req.Ack(newResponse(vote.term, false))
-//c.replica.Term(vote.term, nil, nil)
-//}
+	c.logger.Debug("Handling vote request: %v", vote)
+	if vote.Term <= c.term.Num {
+		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
+		return
+	}
 
-//func (c *candidate) handleAppendEvents(req *common.Request) {
-//append := req.Body().(replicate)
+	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
+	if err != nil {
+		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
+		return
+	}
 
-//if append.term < c.term.Num {
-//req.Ack(newResponse(c.term.Num, false))
-//return
-//}
+	if vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
+		c.logger.Debug("Voting for candidate [%v]", vote.Id.String())
+		req.Ack(voteResponse{Term: vote.Term, Granted: true}) // should this go after the control has been closed??
+		c.replica.SetTerm(vote.Term, nil, &vote.Id)
+		becomeFollower(c.replica)
+		c.ctrl.Close()
+		return
+	}
 
-//// append.term is >= term.  use it from now on.
-//req.Ack(newResponse(c.term.Num, false))
-//c.replica.Term(append.term, &append.id, &append.id)
-//becomeFollower(c.replica)
-//c.ctrl.Close()
-//}
+	c.logger.Debug("Rejecting candidate vote [%v]", vote.Id.String())
+	req.Ack(voteResponse{Term: vote.Term, Granted: false})
+	c.replica.SetTerm(vote.Term, nil, nil)
+}
+
+func (c *candidate) handleReplication(req *chans.Request) {
+	repl := req.Body().(replicateRequest)
+	if repl.Term < c.term.Num {
+		req.Ack(replicateResponse{Term: c.term.Num, Success: false})
+		return
+	}
+
+	// append.term is >= term.  use it from now on.
+	req.Ack(replicateResponse{Term: repl.Term, Success: false})
+	c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
+	becomeFollower(c.replica)
+	c.ctrl.Close()
+}

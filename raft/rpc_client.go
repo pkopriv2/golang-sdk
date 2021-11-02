@@ -3,7 +3,6 @@ package raft
 import (
 	"time"
 
-	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/net"
@@ -15,15 +14,15 @@ type rpcClient struct {
 	enc enc.EncoderDecoder
 }
 
-func connect(ctx context.Context, network net.Network, timeout time.Duration, addr string) (ret *rpcClient, err error) {
-	client, err := rpc.Dial(rpc.NewDialer(network, addr), rpc.WithDialTimeout(timeout))
+func dialRpcClient(net net.Network, timeout time.Duration, addr string, enc enc.EncoderDecoder) (ret *rpcClient, err error) {
+	client, err := rpc.Dial(rpc.NewDialer(net, addr), rpc.WithDialTimeout(timeout))
 	if err != nil {
 		return
 	}
 
 	ret = &rpcClient{
 		raw: client,
-		enc: enc.Gob}
+		enc: enc}
 	return
 }
 
@@ -31,7 +30,7 @@ func (c *rpcClient) Close() error {
 	return c.raw.Close()
 }
 
-func (c *rpcClient) Barrier() (int, error) {
+func (c *rpcClient) Barrier() (int64, error) {
 	resp, err := c.raw.Send(
 		rpc.Request{
 			Func: funcReadBarrier,
@@ -136,7 +135,7 @@ func (c *rpcClient) Append(r appendEventRequest) (ret appendEventResponse, err e
 	return
 }
 
-func (c *rpcClient) InstallSnapshot(cancel <-chan struct{}, snapshot installSnapshotRequest) (ret installSnapshotResponse, err error) {
+func (c *rpcClient) InstallSnapshotSegment(snapshot installSnapshotRequest) (ret installSnapshotResponse, err error) {
 	var bytes []byte
 	if err = c.enc.EncodeBinary(snapshot, &bytes); err != nil {
 		return
@@ -155,47 +154,3 @@ func (c *rpcClient) InstallSnapshot(cancel <-chan struct{}, snapshot installSnap
 	err = resp.Decode(c.enc, &ret)
 	return
 }
-
-//type rpcClientPool struct {
-//ctx context.Context
-//raw context.ObjectPool
-//}
-
-//func newRpcClientPool(ctx context.Context, network net.Network, peer Peer, size int) *rpcClientPool {
-//return &rpcClientPool{ctx, context.NewObjectPool(ctx.Control(), size, newRpcClientConstructor(ctx, network, peer))}
-//}
-
-//func (c *rpcClientPool) Close() error {
-//return c.raw.Close()
-//}
-
-//func (c *rpcClientPool) Max() int {
-//return c.raw.Max()
-//}
-
-//func (c *rpcClientPool) TakeTimeout(dur time.Duration) *rpcClient {
-//raw := c.raw.TakeTimeout(dur)
-//if raw == nil {
-//return nil
-//}
-
-//return raw.(*rpcClient)
-//}
-
-//func (c *rpcClientPool) Return(cl *rpcClient) {
-//c.raw.Return(cl)
-//}
-
-//func (c *rpcClientPool) Fail(cl *rpcClient) {
-//c.raw.Fail(cl)
-//}
-
-//func newRpcClientConstructor(ctx context.Context, network net.Network, peer Peer) func() (io.Closer, error) {
-//return func() (io.Closer, error) {
-//if cl, err := peer.Client(ctx, network, 30*time.Second); cl != nil && err == nil {
-//return cl, err
-//}
-
-//return nil, nil
-//}
-//}
