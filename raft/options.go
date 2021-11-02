@@ -3,9 +3,7 @@ package raft
 import (
 	"time"
 
-	"github.com/pkg/errors"
-	"github.com/pkopriv2/golang-sdk/lang/boltdb"
-	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/boltdb/bolt"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 )
@@ -19,8 +17,8 @@ type Options struct {
 	Workers         int
 	MaxConns        int
 	Encoder         enc.EncoderDecoder
-	LogStorage      func(context.Context) (LogStore, error)
-	TermStorage     func(context.Context) (*termStore, error)
+	LogStorage      func() (LogStore, error)
+	TermStorage     func() (*termStore, error)
 }
 
 func (o Options) Update(fns ...func(*Options)) (ret Options) {
@@ -31,16 +29,10 @@ func (o Options) Update(fns ...func(*Options)) (ret Options) {
 	return
 }
 
-func WithBoltStore(path string) func(ctx context.Context) (LogStore, error) {
-	return func(ctx context.Context) (ret LogStore, err error) {
-		db, err := boltdb.Open(ctx, path)
-		if err != nil {
-			err = errors.Wrapf(err, "Unable to open db [%v]", path)
-			return
-		}
-
-		ret, err = NewBoltStore(db)
-		return
+// This is wrong! Need to share boltdb instance so can't create here!
+func WithBoltStore(db *bolt.DB) func() (LogStore, error) {
+	return func() (LogStore, error) {
+		return NewBoltStore(db)
 	}
 }
 
@@ -56,7 +48,6 @@ func buildOptions(fns ...Option) (ret Options) {
 		Workers:         10,
 		MaxConns:        5,
 		Encoder:         enc.Json,
-		LogStorage:      WithBoltStore("~/.raft/data.db"),
 	}
 	for _, fn := range fns {
 		fn(&ret)

@@ -1,8 +1,12 @@
 package raft
 
 import (
+	"io"
+	"time"
+
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 	"github.com/pkopriv2/golang-sdk/rpc"
 	uuid "github.com/satori/go.uuid"
@@ -16,7 +20,7 @@ type host struct {
 	ctrl       context.Control
 	logger     context.Logger
 	server     rpc.Server
-	core       *replica
+	replica    *replica
 	sync       *syncer
 	leaderPool pool.ObjectPool // T: *rpcClient
 }
@@ -29,12 +33,12 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		}
 	}()
 
-	store, err := opts.LogStorage(ctx)
+	store, err := opts.LogStorage()
 	if err != nil {
 		return nil, err
 	}
 
-	terms, err := opts.TermStorage(ctx)
+	terms, err := opts.TermStorage()
 	if err != nil {
 		return nil, err
 	}
@@ -47,15 +51,15 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		listener.Close()
 	})
 
-	core, err := newReplica(ctx, store, terms, listener.Address().String(), opts)
+	replica, err := newReplica(ctx, store, terms, listener.Address().String(), opts)
 	if err != nil {
 		return nil, err
 	}
 	ctx.Control().Defer(func(cause error) {
-		core.Close()
+		replica.Close()
 	})
 
-	server, err := newServer(ctx, core, listener, core.Options.Workers)
+	server, err := newServer(ctx, replica, listener, replica.Options.Workers)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +67,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		server.Close()
 	})
 
-	pool := newLeaderPool(core, 10)
+	pool := newLeaderPool(replica, 10)
 	ctx.Control().Defer(func(cause error) {
 		pool.Close()
 	})
@@ -77,7 +81,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		ctx:        ctx,
 		ctrl:       ctx.Control(),
 		logger:     ctx.Logger(),
-		core:       core,
+		replica:    replica,
 		server:     server,
 		leaderPool: pool,
 		sync:       sync,
@@ -94,31 +98,31 @@ func (h *host) Close() error {
 }
 
 func (h *host) Id() uuid.UUID {
-	return h.core.Self.Id
+	return h.replica.Self.Id
 }
 
 func (h *host) Context() context.Context {
-	return h.core.Ctx
+	return h.replica.Ctx
 }
 
 func (h *host) Addr() string {
-	return h.core.Self.Addr
+	return h.replica.Self.Addr
 }
 
 func (h *host) Self() Peer {
-	return h.core.Self
+	return h.replica.Self
 }
 
 func (h *host) Peers() []Peer {
-	return h.core.Others()
+	return h.replica.Others()
 }
 
 func (h *host) Cluster() []Peer {
-	return h.core.Cluster()
+	return h.replica.Cluster()
 }
 
 func (h *host) Roster() []Peer {
-	return h.core.Cluster()
+	return h.replica.Cluster()
 }
 
 func (h *host) Sync() (Sync, error) {
@@ -126,29 +130,29 @@ func (h *host) Sync() (Sync, error) {
 }
 
 func (h *host) Log() (Log, error) {
-	return newLogClient(h.core, h.leaderPool), nil
+	return newLogClient(h.replica, h.leaderPool), nil
 }
 
 func (h *host) Addrs() []string {
 	addrs := make([]string, 0, 8)
-	for _, p := range h.core.Cluster() {
+	for _, p := range h.replica.Cluster() {
 		addrs = append(addrs, p.Addr)
 	}
 	return addrs
 }
 
 func (h *host) Start() error {
-	becomeFollower(h.core)
+	becomeFollower(h.replica)
 	return nil
 }
 
 func (h *host) Join(addr string) error {
 	var err error
 
-	becomeFollower(h.core)
+	becomeFollower(h.replica)
 	defer func() {
 		if err != nil {
-			h.core.ctrl.Fail(err)
+			h.replica.ctrl.Fail(err)
 			h.ctx.Logger().Error("Error joining: %v", err)
 		}
 	}()
@@ -177,12 +181,12 @@ func (h *host) Leave() error {
 	}
 
 	h.ctx.Logger().Info("Shutting down: %v", err)
-	h.core.ctrl.Fail(err)
+	h.replica.ctrl.Fail(err)
 	return err
 }
 
 func (h *host) tryJoin(addr string) error {
-	cl, err := dialRpcClient(h.core.Options.Network, h.core.Options.ReadTimeout, addr, h.core.Options.Encoder)
+	cl, err := dialRpcClient(h.replica.Options.Network, h.replica.Options.ReadTimeout, addr, h.replica.Options.Encoder)
 	if err != nil {
 		return errors.Wrapf(err, "Error connecting to peer [%v]", addr)
 	}
@@ -190,43 +194,184 @@ func (h *host) tryJoin(addr string) error {
 
 	status, err := cl.Status()
 	if err != nil {
-		return errors.Wrapf(err, "Error joining cluster [%v]", addr)
+		return errors.Wrapf(err, "Error getting cluster status from [%v]", addr)
 	}
-	if err := h.core.SetTerm(status.Term.Num, nil, nil); err != nil {
+
+	// this may not be necessary...
+	if err := h.replica.SetTerm(status.Term.Num, status.LeaderId, status.LeaderId); err != nil {
 		return errors.Wrap(err, "Error updating term information")
 	}
-	return cl.UpdateRoster(h.core.Self, true)
+	return cl.UpdateRoster(h.replica.Self, true)
 }
 
 func (h *host) tryLeave() error {
-	peer := h.core.Leader()
+	peer := h.replica.Leader()
 	if peer == nil {
 		return ErrNoLeader
 	}
 
-	cl, err := peer.Dial(h.core.Options)
+	cl, err := peer.Dial(h.replica.Options)
 	if err != nil {
 		return err
 	}
 	defer cl.Close()
-	return cl.UpdateRoster(h.core.Self, false)
+	return cl.UpdateRoster(h.replica.Self, false)
 }
 
-func hostsCollect(hosts []*host, fn func(h *host) bool) []*host {
-	ret := make([]*host, 0, len(hosts))
-	for _, h := range hosts {
-		if fn(h) {
-			ret = append(ret, h)
+func newLeaderPool(self *replica, size int) pool.ObjectPool {
+	return pool.NewObjectPool(self.Ctx.Control(), size, func() (io.Closer, error) {
+		var cl *rpcClient
+		for cl == nil {
+			leader := self.Leader()
+			if leader == nil {
+				time.Sleep(self.ElectionTimeout / 5)
+				continue
+			}
+
+			cl, _ = leader.Dial(self.Options)
 		}
-	}
-	return ret
+		return cl, nil
+	})
 }
 
-func hostsFirst(hosts []*host, fn func(h *host) bool) *host {
-	for _, h := range hosts {
-		if fn(h) {
-			return h
-		}
+// This is the public facing client.  Only emits committed items.
+type logClient struct {
+	id         uuid.UUID
+	ctx        context.Context
+	ctrl       context.Control
+	logger     context.Logger
+	leaderPool pool.ObjectPool // T: *rpcClient
+	self       *replica
+}
+
+func newLogClient(self *replica, leaderPool pool.ObjectPool) *logClient {
+	ctx := self.Ctx.Sub("LogClient")
+	return &logClient{
+		id:         self.Self.Id,
+		ctx:        ctx,
+		logger:     ctx.Logger(),
+		ctrl:       ctx.Control(),
+		self:       self,
+		leaderPool: leaderPool,
 	}
-	return nil
+}
+
+func (s *logClient) Id() uuid.UUID {
+	return s.id
+}
+
+func (c *logClient) Close() error {
+	return c.ctrl.Close()
+}
+
+func (s *logClient) Head() int64 {
+	return s.self.Log.Head()
+}
+
+func (s *logClient) Committed() int64 {
+	return s.self.Log.Committed()
+}
+
+func (s *logClient) Compact(until int64, data <-chan Event) error {
+	return s.self.Compact(until, data)
+}
+
+func (s *logClient) Listen(start int64, buf int64) (Listener, error) {
+	raw, err := s.self.Log.ListenCommits(start, buf)
+	if err != nil {
+		return nil, err
+	}
+	return newLogClientListener(raw), nil
+}
+
+func (c *logClient) Append(cancel <-chan struct{}, e []byte) (Entry, error) {
+	return c.append(cancel, e, Std)
+}
+
+func (s *logClient) Snapshot() (int64, EventStream, error) {
+	snapshot, err := s.self.Log.Snapshot()
+	if err != nil {
+		return 0, nil, err
+	}
+	return snapshot.LastIndex(), newSnapshotStream(s.ctrl, snapshot, 1024), nil
+}
+
+func (c *logClient) append(cancel <-chan struct{}, payload []byte, kind Kind) (entry Entry, err error) {
+	for {
+		raw := c.leaderPool.TakeOrCancel(cancel)
+		if raw == nil {
+			err = errs.CanceledError
+			return
+		}
+
+		// FIXME: Implement exponential backoff
+		resp, e := raw.(*rpcClient).Append(appendEventRequest{payload, kind})
+		if e != nil {
+			c.leaderPool.Fail(raw)
+			continue
+		}
+
+		entry = Entry{
+			Kind:    Std,
+			Term:    resp.Term,
+			Index:   resp.Index,
+			Payload: payload,
+		}
+
+		c.leaderPool.Return(raw)
+		return
+	}
+}
+
+// This client filters out the low-level entries and replaces
+// them with NoOp instructions to the consuming state machine.
+type logClientListener struct {
+	raw Listener
+	dat chan Entry
+}
+
+func newLogClientListener(raw Listener) *logClientListener {
+	l := &logClientListener{raw, make(chan Entry)}
+	l.start()
+	return l
+}
+
+func (p *logClientListener) start() {
+	go func() {
+		for {
+			var e Entry
+			select {
+			case <-p.raw.Ctrl().Closed():
+				return
+			case e = <-p.raw.Data():
+			}
+
+			if e.Kind != Std {
+				e = Entry{
+					Kind:    NoOp,
+					Term:    e.Term,
+					Index:   e.Index,
+					Payload: []byte{},
+				}
+			}
+
+			select {
+			case <-p.raw.Ctrl().Closed():
+				return
+			case p.dat <- e:
+			}
+		}
+	}()
+}
+
+func (l *logClientListener) Close() error {
+	return l.raw.Close()
+}
+
+func (l *logClientListener) Ctrl() context.Control {
+	return l.raw.Ctrl()
+}
+
+func (l *logClientListener) Data() <-chan Entry {
+	return l.dat
 }

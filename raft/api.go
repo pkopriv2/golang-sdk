@@ -124,6 +124,7 @@ import (
 // Core api errors
 var (
 	ErrClosed      = errors.New("Raft:ErrClosed")
+	ErrCanceled    = errors.New("Raft:ErrCanceled")
 	ErrNotLeader   = errors.New("Raft:ErrNotLeader")
 	ErrNotFollower = errors.New("Raft:ErrNotFollower")
 	ErrNoLeader    = errors.New("Raft:ErrNoLeader")
@@ -149,9 +150,6 @@ func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to initialize host")
 	}
-	defer ctx.Control().Defer(func(error) {
-		host.Close()
-	})
 
 	// FIXME: use all peer addrs.
 	return host, host.Join(peers[0])
@@ -179,6 +177,10 @@ func (k Kind) String() string {
 }
 
 type Event []byte
+
+func (e Event) Decode(dec enc.Decoder, ptr interface{}) error {
+	return dec.DecodeBinary(e, ptr)
+}
 
 // An Entry represents an entry in the replicated log.
 type Entry struct {

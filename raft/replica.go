@@ -2,7 +2,6 @@ package raft
 
 import (
 	"fmt"
-	"io"
 	"math/rand"
 	"sync"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/chans"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
-	"github.com/pkopriv2/golang-sdk/lang/pool"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -337,22 +335,6 @@ func (r *replica) LocalAppend(event appendEventRequest) (Entry, error) {
 		return Entry{}, err
 	}
 	return val.(Entry), nil
-}
-
-func newLeaderPool(self *replica, size int) pool.ObjectPool {
-	return pool.NewObjectPool(self.Ctx.Control(), size, func() (io.Closer, error) {
-		var cl *rpcClient
-		for cl == nil {
-			leader := self.Leader()
-			if leader == nil {
-				time.Sleep(self.ElectionTimeout / 5)
-				continue
-			}
-
-			cl, _ = leader.Dial(self.Options)
-		}
-		return cl, nil
-	})
 }
 
 func getOrCreateReplicaId(store *termStore, addr string) (uuid.UUID, error) {

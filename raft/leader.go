@@ -15,14 +15,13 @@ import (
 )
 
 type leader struct {
-	ctx        context.Context
-	logger     context.Logger
-	ctrl       context.Control
-	syncer     *logSyncer
-	proxyPool  pool.WorkPool
-	appendPool pool.WorkPool
-	term       term
-	replica    *replica
+	ctx      context.Context
+	logger   context.Logger
+	ctrl     context.Control
+	syncer   *logSyncer
+	workPool pool.WorkPool
+	term     term
+	replica  *replica
 }
 
 func becomeLeader(replica *replica) {
@@ -31,14 +30,9 @@ func becomeLeader(replica *replica) {
 	ctx := replica.Ctx.Sub("Leader(%v)", replica.CurrentTerm())
 	ctx.Logger().Info("Becoming leader")
 
-	proxyPool := pool.NewWorkPool(ctx.Control(), 20)
+	workPool := pool.NewWorkPool(ctx.Control(), 20)
 	ctx.Control().Defer(func(error) {
-		proxyPool.Close()
-	})
-
-	appendPool := pool.NewWorkPool(ctx.Control(), 20)
-	ctx.Control().Defer(func(error) {
-		appendPool.Close()
+		workPool.Close()
 	})
 
 	logSyncer := newLogSyncer(ctx, replica)
@@ -47,34 +41,19 @@ func becomeLeader(replica *replica) {
 	})
 
 	l := &leader{
-		ctx:        ctx,
-		logger:     ctx.Logger(),
-		ctrl:       ctx.Control(),
-		syncer:     logSyncer,
-		proxyPool:  proxyPool,
-		appendPool: appendPool,
-		term:       replica.CurrentTerm(),
-		replica:    replica,
+		ctx:      ctx,
+		logger:   ctx.Logger(),
+		ctrl:     ctx.Control(),
+		syncer:   logSyncer,
+		workPool: workPool,
+		term:     replica.CurrentTerm(),
+		replica:  replica,
 	}
 
 	l.start()
 }
 
 func (l *leader) start() {
-	// Proxy routine.
-	go func() {
-		defer l.ctrl.Close()
-
-		for !l.ctrl.IsClosed() {
-			select {
-			case <-l.ctrl.Closed():
-				return
-			case req := <-l.replica.RemoteAppends:
-				l.handleRemoteAppend(req)
-			}
-		}
-	}()
-
 	// Roster routine
 	go func() {
 		defer l.ctrl.Close()
@@ -101,6 +80,8 @@ func (l *leader) start() {
 				return
 			case <-l.replica.ctrl.Closed():
 				return
+			case req := <-l.replica.RemoteAppends:
+				l.handleLocalAppend(req)
 			case req := <-l.replica.LocalAppends:
 				l.handleLocalAppend(req)
 			case req := <-l.replica.Snapshots:
@@ -178,20 +159,10 @@ func (c *leader) handleReadBarrier(req *chans.Request) {
 	c.ctrl.Close()
 }
 
-func (c *leader) handleRemoteAppend(req *chans.Request) {
-	err := c.proxyPool.SubmitOrCancel(req.Canceled(), func() {
-		req.Return(c.replica.LocalAppend(req.Body().(appendEventRequest)))
-	})
-
-	if err != nil {
-		req.Fail(errors.Wrapf(err, "Error submitting work to proxy pool."))
-	}
-}
-
 func (c *leader) handleLocalAppend(req *chans.Request) {
-	err := c.appendPool.SubmitOrCancel(req.Canceled(), func() {
+	err := c.workPool.SubmitOrCancel(req.Canceled(), func() {
 		req.Return(c.syncer.Append(req.Body().(appendEventRequest)))
-		c.broadcastHeartbeat()
+		c.broadcastHeartbeat() // ?? why this ??
 	})
 
 	if err != nil {
@@ -424,7 +395,7 @@ func (s *logSyncer) handleRosterChange(peers []Peer) {
 	// Remove any missing
 	for id, sync := range cur {
 		if _, ok := active[id]; !ok {
-			sync.ctrl.Close()
+			sync.Close()
 		}
 	}
 
@@ -453,17 +424,17 @@ func (s *logSyncer) start() {
 	}()
 }
 
-func (s *logSyncer) Append(req appendEventRequest) (item Entry, err error) {
-	committed := make(chan struct{}, 1)
+func (s *logSyncer) Append(req appendEventRequest) (Entry, error) {
+	committed := make(chan Entry, 1)
 	go func() {
 		// append
-		item, err = s.self.Log.Append(req.Event, s.term.Num, req.Kind)
+		item, err := s.self.Log.Append(req.Event, s.term.Num, req.Kind)
 		if err != nil {
 			s.ctrl.Fail(err)
 			return
 		}
 
-		// wait for majority.
+		// wait for majority to append as well
 		majority := s.self.Majority() - 1
 		for done := make(map[uuid.UUID]struct{}); len(done) < majority; {
 			for _, p := range s.self.Others() {
@@ -477,7 +448,7 @@ func (s *logSyncer) Append(req appendEventRequest) (item Entry, err error) {
 				}
 
 				index, term := syncer.GetPrevIndexAndTerm()
-				if index >= item.Index && term == s.term.Num {
+				if index >= item.Index && term >= s.term.Num {
 					done[p.Id] = struct{}{}
 				}
 			}
@@ -485,16 +456,18 @@ func (s *logSyncer) Append(req appendEventRequest) (item Entry, err error) {
 			if s.ctrl.IsClosed() {
 				return
 			}
+
+			time.Sleep(10 * time.Millisecond)
 		}
 
 		s.self.Log.Commit(item.Index) // commutative, so safe in the event of out of order commits.
-		committed <- struct{}{}
+		committed <- item
 	}()
 
 	select {
 	case <-s.ctrl.Closed():
 		return Entry{}, errs.Or(s.ctrl.Failure(), ErrClosed)
-	case <-committed:
+	case item := <-committed:
 		return item, nil
 	}
 }
@@ -723,7 +696,7 @@ func (s *peerSyncer) getLatestLocalEntry() (Entry, error) {
 		return Entry{}, err
 	}
 
-	prev, ok, err := s.self.Log.Get(lastIndex)
+	prev, ok, err := s.self.Log.Get(lastIndex - 1)
 	if ok || err != nil {
 		return prev, err
 	}

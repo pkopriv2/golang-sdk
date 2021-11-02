@@ -22,6 +22,8 @@ var (
 type LogStore interface {
 	GetLog(uuid.UUID) (StoredLog, error)
 	NewLog(uuid.UUID, Config) (StoredLog, error)
+
+	// FIXME: snapshotting is currently broken. Need to be able to install it in chunks
 	NewSnapshot(lastIndex int64, lastTerm int64, data <-chan Event, conf Config) (StoredSnapshot, error)
 }
 

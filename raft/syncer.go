@@ -1,9 +1,7 @@
 package raft
 
 import (
-	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 )
 
@@ -39,11 +37,11 @@ func (s *syncer) Ack(index int64) {
 func (s *syncer) Sync(cancel <-chan struct{}, index int64) error {
 	_, alive := s.ref.WaitUntilOrCancel(cancel, index)
 	if !alive {
-		return errors.WithStack(errs.ClosedError)
+		return ErrClosed
 	}
 
 	if context.IsClosed(cancel) {
-		return errors.WithStack(errs.CanceledError)
+		return ErrCanceled
 	}
 
 	return nil
@@ -52,7 +50,7 @@ func (s *syncer) Sync(cancel <-chan struct{}, index int64) error {
 func (s *syncer) tryBarrier(cancel <-chan struct{}) (val int64, err error) {
 	raw := s.pool.TakeOrCancel(cancel)
 	if raw == nil {
-		return 0, errors.WithStack(errs.CanceledError)
+		return 0, ErrCanceled
 	}
 	defer func() {
 		if err != nil {
