@@ -142,7 +142,7 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 	// current term vote.  (accept if no vote and if candidate log is as long as ours)
 	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {
-		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
+		req.Fail(err)
 		return
 	}
 

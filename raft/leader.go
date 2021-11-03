@@ -479,7 +479,7 @@ func (s *logSyncer) Append(req appendEventRequest) (Entry, error) {
 				return
 			}
 
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(1 * time.Millisecond)
 		}
 
 		s.self.Log.Commit(item.Index) // commutative, so safe in the event of out of order commits.

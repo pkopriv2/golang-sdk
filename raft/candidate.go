@@ -133,7 +133,7 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 
 	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {
-		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
+		req.Fail(err)
 		return
 	}
 
@@ -158,8 +158,14 @@ func (c *candidate) handleReplication(req *chans.Request) {
 		return
 	}
 
+	max, _, err := c.replica.Log.LastIndexAndTerm()
+	if err != nil {
+		req.Fail(err)
+		return
+	}
+
 	// repl.term is >= term.  use it from now on.
-	req.Ack(replicateResponse{Term: repl.Term, Success: false})
+	req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: max})
 	c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
 	c.ctrl.Close()
 	becomeFollower(c.replica)
