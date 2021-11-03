@@ -205,11 +205,9 @@ func (c *follower) handleReplication(req *chans.Request) {
 	}
 
 	// if this is a heartbeat, bail out
-	actual, _ := c.replica.Log.Commit(repl.Commit)
-	if actual != repl.Commit {
-		c.logger.Info("Error committing [attempt=%v, actual=%v]", repl.Commit, actual)
-	}
+	c.logger.Debug("Committing [%v]", repl.Commit)
 
+	c.replica.Log.Commit(repl.Commit)
 	if len(repl.Items) == 0 {
 		req.Ack(replicateResponse{Term: repl.Term, Success: true})
 		return
@@ -232,7 +230,6 @@ func (c *follower) handleReplication(req *chans.Request) {
 	// insert items.
 	c.logger.Debug("Inserting batch [offset=%v,num=%v]", repl.Items[0].Index, len(repl.Items))
 	if err := c.replica.Log.Insert(repl.Items); err != nil {
-		c.logger.Error("Error inserting batch: %v", err)
 		req.Fail(err)
 		return
 	}

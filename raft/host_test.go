@@ -166,7 +166,7 @@ func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 }
 
 func TestHost_Cluster_Append(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Off)
+	ctx := context.NewContext(os.Stdout, context.Error)
 	defer ctx.Close()
 
 	cluster, err := startTestCluster(ctx, 3)
@@ -190,7 +190,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 	}
 
 	var last Entry
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		last, err = log.Append(timer.Closed(), []byte(fmt.Sprintf("%v", i)))
 		if err != nil {
 			t.FailNow()
@@ -209,7 +209,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 			return
 		}
 
-		for i := 0; i < 10; {
+		for i := 0; i < 100; {
 			select {
 			case <-timer.Closed():
 				buf.Close()

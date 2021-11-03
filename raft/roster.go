@@ -161,7 +161,7 @@ func (r *rosterManager) reloadRosterFromSnapshot() ([]Peer, int64, error) {
 func (r *rosterManager) listenAppends(offset int64) (Listener, error) {
 	r.logger.Info("Listening to appends from offset [%v]", offset)
 
-	l, err := r.self.Log.ListenAppends(offset, 256)
+	l, err := r.self.Log.ListenAppends(offset, 0)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Error registering listener at offset [%v]", offset)
 	}
@@ -172,7 +172,7 @@ func (r *rosterManager) listenAppends(offset int64) (Listener, error) {
 func (r *rosterManager) listenCommits(offset int64) (Listener, error) {
 	r.logger.Info("Listening to commits from offset [%v]", offset)
 
-	l, err := r.self.Log.ListenCommits(offset, 256)
+	l, err := r.self.Log.ListenCommits(offset, 0)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Error registering listener at offset [%v]", offset)
 	}

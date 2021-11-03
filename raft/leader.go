@@ -164,7 +164,7 @@ func (c *leader) handleReadBarrier(req *chans.Request) {
 func (c *leader) handleLocalAppend(req *chans.Request) {
 	err := c.workPool.SubmitOrCancel(req.Canceled(), func() {
 		req.Return(c.syncer.Append(req.Body().(appendEventRequest)))
-		c.broadcastHeartbeat() // This commits the log entry.
+		//c.broadcastHeartbeat() // This commits the log entry.
 	})
 	if err != nil {
 		req.Fail(errors.Wrapf(err, "Error submitting work to append pool."))
@@ -726,6 +726,10 @@ func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry,
 	}
 
 	s.logger.Debug("Sending batch [offset=%v, num=%v]", batch[0].Index, len(batch))
+
+	for _, item := range batch {
+		s.logger.Debug("Sending item [offset=%v]: %v", item.Index, string(item.Payload))
+	}
 
 	// send the append request.
 	resp, err := cl.Replicate(newReplication(s.self.Self.Id, s.term.Num, prev.Index, prev.Term, batch, s.self.Log.Committed()))

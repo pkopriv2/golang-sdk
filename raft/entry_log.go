@@ -250,26 +250,26 @@ func (l *refListener) start(from int64) {
 	go func() {
 		defer l.Close()
 
-		cur := from
+		next := from
 		for {
-			next, ok := l.pos.WaitUntil(cur + 1)
+			horizon, ok := l.pos.WaitUntil(next)
 			if !ok || l.ctrl.IsClosed() || l.log.ctrl.IsClosed() {
 				return
 			}
 
 			// FIXME: Can still miss truncations
-			if next < cur {
-				l.ctrl.Fail(errors.Wrapf(ErrOutOfBounds, "Log truncated to [%v] was [%v]", next, cur))
+			if horizon < next {
+				l.ctrl.Fail(errors.Wrapf(ErrOutOfBounds, "Log truncated to [%v] was [%v]", next, next))
 				return
 			}
 
-			for cur < next {
+			for next <= horizon {
 				if l.ctrl.IsClosed() || l.log.ctrl.IsClosed() {
 					return
 				}
 
 				// scan the next batch
-				batch, err := l.log.Scan(cur, min(next+1, cur+1+l.buf))
+				batch, err := l.log.Scan(next, min(horizon+1, next+1+l.buf))
 				if err != nil {
 					l.ctrl.Fail(err)
 					return
@@ -286,8 +286,8 @@ func (l *refListener) start(from int64) {
 					}
 				}
 
-				// update current
-				cur = cur + int64(len(batch))
+				//update current
+				next = next + int64(len(batch))
 			}
 		}
 	}()
