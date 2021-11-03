@@ -134,7 +134,7 @@ go func() {
 
 # Security
 
-This is the earliest version of kayak and security has not been integrated.  However, 
+This is the earliest version of raft and security has not been integrated.  However, 
 we plan to tackle this issue shortly.  
 
 More details to come.
