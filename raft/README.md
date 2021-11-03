@@ -22,7 +22,7 @@ strict linearizability must also be idempotent.
 Raft has been designed to be embedded in other projects as a basis for distributed consensus.  To get started, pull the dependency with go get:
 
 ```sh
-go get http://github.com/pkopriv2/golang-sdk
+go get github.com/pkopriv2/golang-sdk/raft
 ```
 
 Import it:
