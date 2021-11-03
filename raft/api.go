@@ -125,6 +125,7 @@ import (
 var (
 	ErrClosed      = errors.New("Raft:ErrClosed")
 	ErrCanceled    = errors.New("Raft:ErrCanceled")
+	ErrToSlow      = errors.New("Raft:ErrToSlow")
 	ErrNotLeader   = errors.New("Raft:ErrNotLeader")
 	ErrNotFollower = errors.New("Raft:ErrNotFollower")
 	ErrNoLeader    = errors.New("Raft:ErrNoLeader")
@@ -231,6 +232,7 @@ type Host interface {
 }
 
 type Log interface {
+	io.Closer
 
 	// Returns the index of the maximum inserted item in the local log.
 	Head() int64

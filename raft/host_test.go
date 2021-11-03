@@ -166,10 +166,10 @@ func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 }
 
 func TestHost_Cluster_Append(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Info)
+	ctx := context.NewContext(os.Stdout, context.Off)
 	defer ctx.Close()
 
-	cluster, err := startTestCluster(ctx, 5)
+	cluster, err := startTestCluster(ctx, 3)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -183,48 +183,51 @@ func TestHost_Cluster_Append(t *testing.T) {
 	}
 	assert.NotNil(t, leader)
 
-	entries := []Entry{}
-	for _, h := range cluster {
-		go func(h Host) {
-			log, err := h.Log()
-			if !assert.Nil(t, err) {
-				return
-			}
-			buf, err := log.Listen(0, 10)
-			if err != nil {
-				return
-			}
+	log, err := leader.Log()
+	if err != nil {
+		t.FailNow()
+		return
+	}
 
-			for {
-				select {
-				case <-timer.Closed():
-					return
-				case e := <-buf.Data():
-					fmt.Println(fmt.Sprintf("Host(%v): %v", h.Self().Id.String()[:8], string(e.Payload)))
-				}
-			}
-		}(h)
-
-		log, err := h.Log()
+	var last Entry
+	for i := 0; i < 10; i++ {
+		last, err = log.Append(timer.Closed(), []byte(fmt.Sprintf("%v", i)))
 		if err != nil {
 			t.FailNow()
 			return
 		}
+		fmt.Println("Wrote: ", last.Index)
+	}
 
-		for i := 0; i < 3; i++ {
-			e, err := log.Append(timer.Closed(), []byte(fmt.Sprintf("%v", i)))
-			if err != nil {
-				t.FailNow()
-				return
-			}
-
-			entries = append(entries, e)
+	for _, h := range cluster {
+		log, err := h.Log()
+		if !assert.Nil(t, err) {
+			return
 		}
+		buf, err := log.Listen(0, 1024)
+		if !assert.Nil(t, err) {
+			return
+		}
+
+		for i := 0; i < 10; {
+			select {
+			case <-timer.Closed():
+				buf.Close()
+				log.Close()
+				return
+			case e := <-buf.Data():
+				fmt.Println(fmt.Sprintf("%-2v: Host(%v): %v", e.Index, h.Self().Id.String()[:8], string(e.Payload)))
+				if e.Kind == Std {
+					i++
+				}
+			}
+		}
+
+		buf.Close()
+		log.Close()
 	}
 
-	for _, e := range entries {
-		assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(e.Index)))
-	}
+	assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(last.Index)))
 
 }
 

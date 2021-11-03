@@ -205,7 +205,11 @@ func (c *follower) handleReplication(req *chans.Request) {
 	}
 
 	// if this is a heartbeat, bail out
-	c.replica.Log.Commit(repl.Commit)
+	actual, _ := c.replica.Log.Commit(repl.Commit)
+	if actual != repl.Commit {
+		c.logger.Info("Error committing [attempt=%v, actual=%v]", repl.Commit, actual)
+	}
+
 	if len(repl.Items) == 0 {
 		req.Ack(replicateResponse{Term: repl.Term, Success: true})
 		return

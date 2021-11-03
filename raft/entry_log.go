@@ -252,7 +252,7 @@ func (l *refListener) start(from int64) {
 
 		cur := from
 		for {
-			next, ok := l.pos.WaitUntil(cur)
+			next, ok := l.pos.WaitUntil(cur + 1)
 			if !ok || l.ctrl.IsClosed() || l.log.ctrl.IsClosed() {
 				return
 			}
@@ -269,7 +269,7 @@ func (l *refListener) start(from int64) {
 				}
 
 				// scan the next batch
-				batch, err := l.log.Scan(cur, min(next+1, cur+l.buf))
+				batch, err := l.log.Scan(cur, min(next+1, cur+1+l.buf))
 				if err != nil {
 					l.ctrl.Fail(err)
 					return

@@ -166,7 +166,6 @@ func (c *leader) handleLocalAppend(req *chans.Request) {
 		req.Return(c.syncer.Append(req.Body().(appendEventRequest)))
 		c.broadcastHeartbeat() // This commits the log entry.
 	})
-
 	if err != nil {
 		req.Fail(errors.Wrapf(err, "Error submitting work to append pool."))
 	}
@@ -196,17 +195,27 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	}
 
 	var err error
+	all = all.Add(update.Peer)
+	c.replica.Roster.Set(all)
 	defer func() {
 		if err != nil {
-			c.logger.Info("Error adding peer [%v].  Removing from syncers.", update.Peer)
+			c.replica.Roster.Set(all.Delete(update.Peer))
+		}
+	}()
+
+	c.syncer.handleRosterChange(all)
+	defer func() {
+		if err != nil {
 			c.syncer.handleRosterChange(all.Delete(update.Peer))
 		}
 	}()
 
-	all = all.Add(update.Peer)
-	c.replica.Roster.Set(all)
-	c.syncer.handleRosterChange(all)
 	sync := c.syncer.GetSyncer(update.Peer.Id)
+	defer func() {
+		if err != nil {
+			sync.Close() // this really isn't necessary, but shouldn't hurt
+		}
+	}()
 
 	_, err = sync.heartbeat(req.Canceled())
 	if err != nil {
@@ -214,21 +223,20 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		return
 	}
 
-	//score, err := sync.score(req.Canceled())
-	//if err != nil {
-	//req.Fail(err)
-	//c.ctrl.Fail(err)
-	//becomeFollower(c.replica)
-	//return
-	//}
+	score, err := sync.score(req.Canceled())
+	if err != nil {
+		req.Fail(err)
+		return
+	}
 
-	//if score < 0 {
-	//req.Fail(errors.Wrapf(errs.TimeoutError, "Unable to merge peer: %v", update.Peer))
-	//return
-	//}
+	if score < 0 {
+		req.Fail(errors.Wrapf(ErrToSlow, "Unable to merge peer: %v", update.Peer))
+		return
+	}
 
 	bytes, err := Config{all}.encode(enc.Json)
 	if err != nil {
+		req.Fail(err)
 		return
 	}
 
@@ -603,20 +611,19 @@ func (s *peerSyncer) start() {
 				err := s.send(s.ctrl.Closed(), func(cl *rpcClient) error {
 					prev, ok, err = s.sendBatch(cl, prev, next)
 					if err != nil {
-						return errors.Wrapf(err, "Error sending batch [prev=%v, next=%v]", prev.Index, next)
+						return errors.Wrapf(err, "Error sending batch [prev=%v,next=%v]", prev.Index, next)
 					}
 
-					// if everything was ok, advance the index and term
 					if ok {
 						s.SetPrevIndexAndTerm(prev.Index, prev.Term)
 						return nil
 					}
 
-					s.logger.Info("Too far behind [%v,%v]. Installing snapshot.", prev.Index, prev.Term)
+					s.logger.Info("Too far behind [index=%v]. Installing snapshot.", prev.Index)
+
 					prev, err = s.sendSnapshotToClient(cl)
 					if err != nil {
-						s.logger.Error("Error: %v", err)
-						return err
+						return errors.Wrap(err, "Error sending snapshot")
 					}
 
 					s.SetPrevIndexAndTerm(prev.Index, prev.Term)
@@ -713,7 +720,6 @@ func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry,
 	// scan a full batch of events.
 	beg, end := prev.Index+1, min(horizon+1, prev.Index+1+256)
 
-	s.logger.Debug("Scanning batch [%v,%v]", beg, end)
 	batch, err := s.self.Log.Scan(beg, end)
 	if err != nil || len(batch) == 0 {
 		return prev, false, err
