@@ -212,7 +212,6 @@ func (c *follower) handleReplication(req *chans.Request) {
 		return
 	}
 
-	c.logger.Debug("Handling replication [%v]: %v", repl.PrevLogIndex, len(repl.Items))
 	if repl.Term > c.term.Num || c.term.LeaderId == nil {
 		c.logger.Info("New leader detected [%v]", repl.LeaderId.String()[:8])
 		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
@@ -223,6 +222,7 @@ func (c *follower) handleReplication(req *chans.Request) {
 	}
 
 	// if this is a heartbeat, bail out
+	c.replica.Log.Commit(repl.Commit)
 	if len(repl.Items) == 0 {
 		req.Ack(replicateResponse{Term: repl.Term, Success: true})
 		return
@@ -243,14 +243,11 @@ func (c *follower) handleReplication(req *chans.Request) {
 	}
 
 	// insert items.
+	c.logger.Debug("Inserting batch [offset=%v,num=%v]", repl.Items[0].Index, len(repl.Items))
 	if err := c.replica.Log.Insert(repl.Items); err != nil {
 		c.logger.Error("Error inserting batch: %v", err)
 		req.Fail(err)
 		return
-	}
-
-	if _, err := c.replica.Log.Commit(repl.Commit); err != nil {
-		c.logger.Info("Error committing offset: %v", err)
 	}
 
 	req.Ack(replicateResponse{Term: repl.Term, Success: true})

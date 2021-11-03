@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 	"github.com/pkopriv2/golang-sdk/rpc"
 	uuid "github.com/satori/go.uuid"
@@ -90,7 +91,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 }
 
 func (h *host) Close() error {
-	h.ctrl.Fail(h.Leave())
+	h.ctrl.Fail(h.leave())
 	return h.ctrl.Failure()
 }
 
@@ -148,7 +149,7 @@ func (h *host) join(addrs []string) (err error) {
 	return h.tryJoin(addrs)
 }
 
-func (h *host) Leave() error {
+func (h *host) leave() error {
 	err := h.tryLeave()
 	h.ctx.Logger().Info("Shutting down: %v", err)
 	h.replica.ctrl.Fail(err)
@@ -169,12 +170,20 @@ func (h *host) tryJoin(addrs []string) error {
 
 			status, err := cl.Status()
 			if err != nil {
-				cl.Close()
 				h.ctx.Logger().Info("Unable to get status [%v]: %v", addrs[j], err)
+				cl.Close()
 				errs = append(errs, err)
 				continue
 			}
 
+			h.replica.Roster.Set(status.Config.Peers)
+			if status.Config.Peers.Contains(h.replica.Self) {
+				h.ctx.Logger().Info("Already a member")
+				cl.Close()
+				return nil
+			}
+
+			h.replica.Roster.Set(status.Config.Peers.Add(h.replica.Self))
 			if status.LeaderId == nil {
 				cl.Close()
 				h.ctx.Logger().Info("No leader currently elected [%v]", addrs[j])
@@ -220,7 +229,7 @@ func (h *host) tryLeave() error {
 	for i := 0; i < 5; i++ {
 		leader := h.replica.Leader()
 		if leader == nil {
-			h.ctx.Logger().Info("There isn't a leader currently. Can't leave until one is elected.")
+			h.ctx.Logger().Info("Currently there is no leader. Can't leave until one is elected")
 
 			timer := time.NewTimer(h.replica.Options.ElectionTimeout)
 			select {
@@ -236,13 +245,23 @@ func (h *host) tryLeave() error {
 		cl, err := leader.Dial(h.replica.Options)
 		if err != nil {
 			h.ctx.Logger().Info("Error dialing leader [%v]: %v", leader.Addr, err)
-			cl.Close()
 			continue
 		}
 
 		if err := cl.UpdateRoster(h.replica.Self, false); err != nil {
 			h.ctx.Logger().Info("Error updating roster [%v]: %v", leader.Addr, err)
+
 			cl.Close()
+			if errs.Is(err, ErrNotLeader) {
+				timer := time.NewTimer(h.replica.Options.ElectionTimeout)
+				select {
+				case <-h.ctrl.Closed():
+					timer.Stop()
+					return ErrClosed
+				case <-timer.C:
+					timer.Stop()
+				}
+			}
 			continue
 		}
 

@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"testing"
@@ -128,7 +129,7 @@ func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
 }
 
 func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Off)
+	ctx := context.NewContext(os.Stdout, context.Info)
 	defer ctx.Close()
 
 	cluster, err := startTestCluster(ctx, 3)
@@ -145,36 +146,54 @@ func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
 	assert.NotNil(t, host)
 }
 
-//func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
-//ctx := context.NewContext(os.Stdout, context.Debug)
-//defer ctx.Close()
+func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, context.Info)
+	defer ctx.Close()
 
-//cluster, err := startTestCluster(ctx, 5)
-//if !assert.Nil(t, err) {
-//return
-//}
+	cluster, err := startTestCluster(ctx, 5)
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//timer := context.NewTimer(ctx.Control(), 20*time.Second)
-//defer timer.Close()
+	timer := context.NewTimer(ctx.Control(), 10*time.Second)
+	defer timer.Close()
 
-//host, err := electLeader(timer.Closed(), cluster)
-//assert.Nil(t, err)
-//assert.NotNil(t, host)
-//}
+	host, err := electLeader(timer.Closed(), cluster)
+	assert.Nil(t, err)
 
-//func TestHost_Cluster_ConvergeSevenPeers(t *testing.T) {
-//ctx := context.NewContext(context.NewEmptyConfig())
-//defer ctx.Close()
-//cluster, err := StartTestCluster(ctx, 7)
-//assert.Nil(t, err)
+	assert.NotNil(t, host)
+}
 
-//timer := ctx.Timer(10 * time.Second)
-//defer timer.Close()
+func TestHost_Cluster_Append(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, context.Debug)
+	defer ctx.Close()
 
-//host, err := ElectLeader(timer.Closed(), cluster)
-//assert.Nil(t, err)
-//assert.NotNil(t, host)
-//}
+	cluster, err := startTestCluster(ctx, 3)
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	timer := context.NewTimer(ctx.Control(), 60*time.Second)
+	defer timer.Close()
+
+	leader, err := electLeader(timer.Closed(), cluster)
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.NotNil(t, leader)
+
+	log, err := leader.Log()
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	entry, err := log.Append(timer.Closed(), []byte("hello"))
+	if !assert.Nil(t, err) {
+		return
+	}
+	fmt.Println("Appended to log: ", entry.Index, entry.Term)
+	assert.Nil(t, syncMajority(timer.Closed(), cluster, syncTo(entry.Index)))
+}
 
 //func TestHost_Cluster_Close(t *testing.T) {
 //ctx := context.NewContext(context.NewEmptyConfig())
@@ -738,6 +757,18 @@ func syncAll(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) error
 		<-time.After(250 * time.Millisecond)
 	}
 	return nil
+}
+
+func syncTo(index int64) func(p Host) bool {
+	return func(p Host) bool {
+		log, err := p.Log()
+		if err != nil {
+			return false
+		}
+
+		fmt.Println(fmt.Sprintf("Host(%v). Log currently at: %v", p.Self(), log.Committed()))
+		return log.Committed() >= index
+	}
 }
 
 func toPeers(cluster []Host) (ret Peers) {

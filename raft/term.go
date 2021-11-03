@@ -23,7 +23,7 @@ func (t term) String() string {
 	}
 
 	votedFor := "nil"
-	if t.LeaderId != nil {
+	if t.VotedFor != nil {
 		votedFor = t.VotedFor.String()[:8]
 	}
 

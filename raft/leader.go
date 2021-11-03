@@ -178,6 +178,7 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	all := c.replica.Cluster()
 	if !update.Join {
 		all = all.Delete(update.Peer)
+		c.replica.Roster.Set(all)
 
 		bytes, err := Config{all}.encode(enc.Json)
 		if err != nil {
@@ -203,34 +204,35 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	}()
 
 	all = all.Add(update.Peer)
+	c.replica.Roster.Set(all)
 	c.syncer.handleRosterChange(all)
-	sync := c.syncer.GetSyncer(update.Peer.Id)
+	//sync := c.syncer.GetSyncer(update.Peer.Id)
 
-	_, err = sync.heartbeat(req.Canceled())
-	if err != nil {
-		req.Fail(err)
-		return
-	}
+	//_, err = sync.heartbeat(req.Canceled())
+	//if err != nil {
+	//req.Fail(err)
+	//return
+	//}
 
-	score, err := sync.score(req.Canceled())
-	if err != nil {
-		req.Fail(err)
-		c.ctrl.Fail(err)
-		becomeFollower(c.replica)
-		return
-	}
+	//score, err := sync.score(req.Canceled())
+	//if err != nil {
+	//req.Fail(err)
+	//c.ctrl.Fail(err)
+	//becomeFollower(c.replica)
+	//return
+	//}
 
-	if score < 0 {
-		req.Fail(errors.Wrapf(errs.TimeoutError, "Unable to merge peer: %v", update.Peer))
-		return
-	}
+	//if score < 0 {
+	//req.Fail(errors.Wrapf(errs.TimeoutError, "Unable to merge peer: %v", update.Peer))
+	//return
+	//}
 
 	bytes, err := Config{all}.encode(enc.Json)
 	if err != nil {
 		return
 	}
 
-	c.logger.Info("Joining peer [%v] with score [%v]", update.Peer, score)
+	c.logger.Info("Joining peer [%v]", update.Peer)
 	if _, e := c.replica.Append(bytes, Conf); e != nil {
 		req.Fail(e)
 		return
@@ -360,8 +362,8 @@ func (s *logSyncer) spawnSyncer(p Peer) *peerSyncer {
 	go func() {
 		select {
 		case <-sync.ctrl.Closed():
-			if cause := errs.Extract(sync.ctrl.Failure(), ErrNotLeader); cause == nil || cause == ErrNotLeader {
-				s.logger.Info("Shutting down log syncer")
+			if errs.Is(sync.ctrl.Failure(), ErrNotLeader) {
+				s.logger.Info("No longer leader. Shutting down")
 				s.ctrl.Fail(sync.ctrl.Failure())
 				return
 			}
@@ -400,12 +402,6 @@ func (s *logSyncer) handleRosterChange(peers []Peer) {
 		}
 	}
 
-	after := make([]Peer, 0, len(active))
-	for _, syncer := range active {
-		after = append(after, syncer.peer)
-	}
-
-	s.logger.Info("Setting roster: %v", after)
 	s.SetSyncers(active)
 }
 
@@ -597,7 +593,7 @@ func (s *peerSyncer) start() {
 				}
 
 				// might have to reinitialize client after each batch.
-				s.logger.Debug("Position [%v/%v]", prev.Index, next)
+				s.logger.Info("Position [%v/%v]", prev.Index, next)
 				err := s.send(s.ctrl.Closed(), func(cl *rpcClient) error {
 					prev, ok, err = s.sendBatch(cl, prev, next)
 					if err != nil {
@@ -697,7 +693,7 @@ func (s *peerSyncer) getLatestLocalEntry() (Entry, error) {
 		return Entry{}, err
 	}
 
-	prev, ok, err := s.self.Log.Get(lastIndex - 1)
+	prev, ok, err := s.self.Log.Get(lastIndex - 1) // probably shouldn't do it like this
 	if ok || err != nil {
 		return prev, err
 	}
@@ -708,17 +704,19 @@ func (s *peerSyncer) getLatestLocalEntry() (Entry, error) {
 // Sends a batch up to the horizon
 func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry, bool, error) {
 	// scan a full batch of events.
-	batch, err := s.self.Log.Scan(prev.Index+1, min(horizon+1, prev.Index+1+256))
+	beg, end := prev.Index+1, min(horizon+1, prev.Index+1+256)
+
+	s.logger.Debug("Scanning batch [%v,%v]", beg, end)
+	batch, err := s.self.Log.Scan(beg, end)
 	if err != nil || len(batch) == 0 {
 		return prev, false, err
 	}
 
-	s.logger.Debug("Sending batch [%v]", len(batch))
+	s.logger.Debug("Sending batch [offset=%v, num=%v]", batch[0].Index, len(batch))
 
 	// send the append request.
 	resp, err := cl.Replicate(newReplication(s.self.Self.Id, s.term.Num, prev.Index, prev.Term, batch, s.self.Log.Committed()))
 	if err != nil {
-		s.logger.Error("Unable to replicate batch [%v]", err)
 		return prev, false, err
 	}
 
