@@ -166,7 +166,7 @@ func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 }
 
 func TestHost_Cluster_Append(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Off)
+	ctx := context.NewContext(os.Stdout, context.Info)
 	defer ctx.Close()
 
 	cluster, err := startTestCluster(ctx, 3)

@@ -618,7 +618,7 @@ func (s *peerSyncer) start() {
 				}
 
 				// might have to reinitialize client after each batch.
-				s.logger.Info("Position [%v/%v]", prev.Index, next)
+				s.logger.Debug("Position [%v/%v]", prev.Index, next)
 				err := s.send(s.ctrl.Closed(), func(cl *rpcClient) error {
 					prev, ok, err = s.sendBatch(cl, prev, next)
 					if err != nil {
