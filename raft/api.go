@@ -125,7 +125,7 @@ import (
 var (
 	ErrClosed      = errors.New("Raft:ErrClosed")
 	ErrCanceled    = errors.New("Raft:ErrCanceled")
-	ErrToSlow      = errors.New("Raft:ErrToSlow")
+	ErrTooSlow     = errors.New("Raft:ErrTooSlow")
 	ErrNotLeader   = errors.New("Raft:ErrNotLeader")
 	ErrNotFollower = errors.New("Raft:ErrNotFollower")
 	ErrNoLeader    = errors.New("Raft:ErrNoLeader")

@@ -5,7 +5,6 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 	"github.com/pkopriv2/golang-sdk/rpc"
-	uuid "github.com/satori/go.uuid"
 )
 
 type rpcServer struct {
@@ -39,18 +38,11 @@ func newServer(ctx context.Context, self *replica, listener net.Listener) (rpc.S
 }
 
 func (s *rpcServer) Status(req rpc.Request) rpc.Response {
-	leader := s.self.Leader()
-
-	var leaderId *uuid.UUID = nil
-	if leader != nil {
-		leaderId = &leader.Id
-	}
-	return rpc.NewStructResponse(s.enc,
-		statusResponse{
-			Self:     s.self.Self,
-			LeaderId: leaderId,
-			Term:     s.self.CurrentTerm(),
-			Config:   Config{s.self.Cluster()}})
+	resp := statusResponse{
+		Self:   s.self.Self,
+		Term:   s.self.CurrentTerm(),
+		Config: Config{s.self.Cluster()}}
+	return rpc.NewStructResponse(s.enc, resp)
 }
 
 func (s *rpcServer) ReadBarrier(req rpc.Request) rpc.Response {

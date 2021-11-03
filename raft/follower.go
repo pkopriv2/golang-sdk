@@ -146,6 +146,16 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 		return
 	}
 
+	// If the replica isn't recognized, deny the vote.
+	_, ok := c.replica.FindPeer(vote.Id)
+	if !ok {
+		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		c.replica.SetTerm(vote.Term, nil, nil)
+		c.ctrl.Close()
+		becomeCandidate(c.replica)
+		return
+	}
+
 	if vote.Term == c.term.Num {
 		if c.term.VotedFor == nil && vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
 			c.logger.Debug("Voting for candidate [%v]", vote.Id)

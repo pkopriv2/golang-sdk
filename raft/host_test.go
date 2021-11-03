@@ -166,7 +166,7 @@ func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 }
 
 func TestHost_Cluster_Append(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Error)
+	ctx := context.NewContext(os.Stdout, context.Debug)
 	defer ctx.Close()
 
 	cluster, err := startTestCluster(ctx, 3)
@@ -190,7 +190,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 	}
 
 	var last Entry
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		last, err = log.Append(timer.Closed(), []byte(fmt.Sprintf("%v", i)))
 		if err != nil {
 			t.FailNow()
@@ -209,7 +209,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 			return
 		}
 
-		for i := 0; i < 100; {
+		for i := 0; i < 10; {
 			select {
 			case <-timer.Closed():
 				buf.Close()
@@ -677,6 +677,7 @@ func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 		return nil, errors.Wrap(err, "Error opening bolt instance")
 	}
 	ctx.Control().Defer(func(error) {
+		boltdb.CloseAndDelete(db)
 		//db.Close() FIXME: NEED TO FIGURE OUT WHY THIS CAUSES SEGFAULT
 	})
 

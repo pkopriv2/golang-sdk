@@ -16,10 +16,9 @@ const (
 )
 
 type statusResponse struct {
-	Self     Peer       `json:"self"`
-	LeaderId *uuid.UUID `json:"leader_id"`
-	Term     term       `json:"term"`
-	Config   Config     `json:"config"`
+	Self   Peer   `json:"self"`
+	Term   term   `json:"term"`
+	Config Config `json:"config"`
 }
 
 type readBarrierResponse struct {

@@ -121,6 +121,16 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 		return
 	}
 
+	// If the replica isn't recognized, deny the vote.
+	_, ok := c.replica.FindPeer(vote.Id)
+	if !ok {
+		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		c.replica.SetTerm(vote.Term, nil, nil)
+		c.ctrl.Close()
+		becomeCandidate(c.replica)
+		return
+	}
+
 	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {
 		req.Ack(voteResponse{Term: c.term.Num, Granted: false})

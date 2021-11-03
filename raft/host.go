@@ -171,7 +171,7 @@ func (h *host) leave() error {
 func (h *host) tryJoin(addrs []string) error {
 
 	errs := []error{}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
 		for j := 0; j < len(addrs); j++ {
 			cl, err := dialRpcClient(addrs[j], h.replica.Options)
 			if err != nil {
@@ -196,9 +196,8 @@ func (h *host) tryJoin(addrs []string) error {
 			}
 
 			h.replica.Roster.Set(status.Config.Peers.Add(h.replica.Self))
-			if status.LeaderId == nil {
+			if status.Term.LeaderId == nil {
 				cl.Close()
-				h.ctx.Logger().Info("No leader currently elected [%v]", addrs[j])
 
 				timer := time.After(h.replica.Options.ElectionTimeout)
 				select {
@@ -206,12 +205,13 @@ func (h *host) tryJoin(addrs []string) error {
 					return ErrClosed
 				case <-timer:
 				}
+				errs = append(errs, errors.Wrapf(ErrNoLeader, "No leader according to [%v]", status.Self))
 				continue
 			}
 
-			leader := status.Config.Peers.First(SearchPeersById(*status.LeaderId))
+			leader := status.Config.Peers.First(SearchPeersById(*status.Term.LeaderId))
 			if leader == nil {
-				h.ctx.Logger().Info("Unable to locate leader in roster")
+				errs = append(errs, errors.Wrapf(ErrNoLeader, "Could not locate leader [%v]", status.Term.LeaderId))
 				continue
 			}
 

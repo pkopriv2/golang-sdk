@@ -223,16 +223,16 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		return
 	}
 
-	score, err := sync.score(req.Canceled())
-	if err != nil {
-		req.Fail(err)
-		return
-	}
+	//score, err := sync.score(req.Canceled())
+	//if err != nil {
+	//req.Fail(err)
+	//return
+	//}
 
-	if score < 0 {
-		req.Fail(errors.Wrapf(ErrToSlow, "Unable to merge peer: %v", update.Peer))
-		return
-	}
+	//if score < 0 {
+	//req.Fail(errors.Wrapf(ErrTooSlow, "Unable to merge peer: %v", update.Peer))
+	//return
+	//}
 
 	bytes, err := Config{all}.encode(enc.Json)
 	if err != nil {
@@ -252,15 +252,26 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 
 func (c *leader) handleRequestVote(req *chans.Request) {
 	vote := req.Body().(voteRequest)
+
 	c.logger.Debug("Handling request vote: %v", vote)
 
-	// handle: previous or current term vote.  (immediately decline.  already leader)
+	// previous or current term vote.  (immediately decline.  already leader)
 	if vote.Term <= c.term.Num {
 		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
 		return
 	}
 
-	// handle: future term vote.  (move to new term.  only accept if candidate log is long enough)
+	// deny the vote if we don't know about the peer.
+	_, ok := c.replica.FindPeer(vote.Id)
+	if !ok {
+		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		c.replica.SetTerm(vote.Term, nil, nil)
+		c.ctrl.Close()
+		becomeCandidate(c.replica)
+		return
+	}
+
+	// future term vote.  (move to new term.  only accept if candidate log is long enough)
 	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {
 		req.Ack(voteResponse{Term: vote.Term, Granted: false})
@@ -726,10 +737,6 @@ func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry,
 	}
 
 	s.logger.Debug("Sending batch [offset=%v, num=%v]", batch[0].Index, len(batch))
-
-	for _, item := range batch {
-		s.logger.Debug("Sending item [offset=%v]: %v", item.Index, string(item.Payload))
-	}
 
 	// send the append request.
 	resp, err := cl.Replicate(newReplication(s.self.Self.Id, s.term.Num, prev.Index, prev.Term, batch, s.self.Log.Committed()))
