@@ -221,7 +221,7 @@ func (p *configListener) start() {
 				continue
 			}
 
-			config, err := parseConfig(enc.Json, next.Payload)
+			config, err := next.ParseConfig(enc.Json)
 			if err != nil {
 				p.ctrl.Fail(errors.WithStack(err))
 				return

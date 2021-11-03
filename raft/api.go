@@ -129,18 +129,26 @@ var (
 	ErrNotLeader   = errors.New("Raft:ErrNotLeader")
 	ErrNotFollower = errors.New("Raft:ErrNotFollower")
 	ErrNoLeader    = errors.New("Raft:ErrNoLeader")
+	ErrNotConfig   = errors.New("Raft:ErrNotConfig")
 )
 
+// Starts the first member of a raft cluster in the background.
+// The provided address must be routable by external members.
 func StartBackground(addr string, fns ...Option) (Host, error) {
-	ctx := context.NewContext(os.Stdout, context.Off)
-	return Start(ctx, addr, fns...)
+	return Start(context.NewContext(os.Stdout, context.Off), addr, fns...)
+}
+
+// Joins a new peer to the existing raft cluster in the background.
+// The provided address must be routable by external members.
+func JoinBackground(addr string, peers []string, fns ...Option) (Host, error) {
+	return Join(context.NewContext(os.Stdout, context.Off), addr, peers, fns...)
 }
 
 // Starts the first member of a raft cluster.  The given addr MUST be routable by external members
 func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 	host, err := newHost(ctx, addr, buildOptions(fns...))
 	if err != nil {
-		return nil, errors.Wrap(err, "Unable to initialize host")
+		return nil, errors.Wrapf(err, "Unable to start cluster [%v]", addr)
 	}
 
 	return host, host.start()
@@ -150,33 +158,23 @@ func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host, error) {
 	host, err := newHost(ctx, addr, buildOptions(fns...))
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "Unable to join cluster [%v]", peers)
 	}
 
 	return host, host.join(peers)
 }
 
-type Kind int
+// Kind describes the the type of entry in the log.  Consumers
+// typically only need to worry about standard entries.
+type Kind string
 
 var (
-	Std  Kind = 0
-	NoOp Kind = 1
-	Conf Kind = 2
+	Std  Kind = "Std"
+	Conf Kind = "Conf"
+	NoOp Kind = "NoOp"
 )
 
-func (k Kind) String() string {
-	switch k {
-	default:
-		return "Unknown"
-	case Std:
-		return "Std"
-	case NoOp:
-		return "NoOp"
-	case Conf:
-		return "Config"
-	}
-}
-
+// An event represents the payload of an entry.
 type Event []byte
 
 func (e Event) Decode(dec enc.Decoder, ptr interface{}) error {
@@ -185,17 +183,21 @@ func (e Event) Decode(dec enc.Decoder, ptr interface{}) error {
 
 // An Entry represents an entry in the replicated log.
 type Entry struct {
-	Kind    Kind   `json:"kind"`
-	Term    int64  `json:"term"`
-	Index   int64  `json:"index"`
-	Payload []byte `json:"payload"`
+	Kind    Kind  `json:"kind"`
+	Term    int64 `json:"term"`
+	Index   int64 `json:"index"`
+	Payload Event `json:"payload"`
 }
 
 func (l Entry) String() string {
 	return fmt.Sprintf("Entry(idx=%v,term=%v,kind=%v,size=%v)", l.Index, l.Term, l.Kind, len(l.Payload))
 }
 
-func (e Entry) parseConfig(dec enc.Decoder) (ret Config, err error) {
+func (e Entry) ParseConfig(dec enc.Decoder) (ret Config, err error) {
+	if e.Kind != Conf {
+		err = ErrNotConfig
+		return
+	}
 	err = dec.DecodeBinary(e.Payload, &ret)
 	return
 }
@@ -206,11 +208,6 @@ type Config struct {
 
 func (c Config) encode(enc enc.Encoder) (ret []byte, err error) {
 	err = enc.EncodeBinary(c, &ret)
-	return
-}
-
-func parseConfig(dec enc.Decoder, data []byte) (ret Config, err error) {
-	err = dec.DecodeBinary(data, &ret)
 	return
 }
 
@@ -271,32 +268,6 @@ type Log interface {
 	Compact(until int64, snapshot <-chan Event) error
 }
 
-type Listener interface {
-	io.Closer
-	Ctrl() context.Control
-	Data() <-chan Entry
-}
-
-type EventStream interface {
-	io.Closer
-	Ctrl() context.Control
-	Data() <-chan Event
-}
-
-// Returns a channel that returns all the events in the batch.  The
-// channel is closed once all items have been received by the channel
-func newEventChannel(batch []Event) (ret <-chan Event) {
-	ch := make(chan Event)
-	go func() {
-		for _, cur := range batch {
-			ch <- cur
-		}
-		close(ch)
-	}()
-	ret = ch
-	return
-}
-
 // The synchronizer gives the consuming machine the ability to synchronize
 // its state with other members of the cluster.  This is critical for
 // machines to be able to prevent stale reads.
@@ -317,6 +288,34 @@ type Sync interface {
 
 	// Sync waits for the local machine to be caught up to the barrier.
 	Sync(cancel <-chan struct{}, index int64) error
+}
+
+// A listener allows consumers to receive entries from the log
+type Listener interface {
+	io.Closer
+	Ctrl() context.Control
+	Data() <-chan Entry
+}
+
+// An event stream allows consumers to send and receive snapshots
+type EventStream interface {
+	io.Closer
+	Ctrl() context.Control
+	Data() <-chan Event
+}
+
+// Returns a channel that returns all the events in the batch.  The
+// channel is closed once all items have been received by the channel
+func newEventChannel(batch []Event) (ret <-chan Event) {
+	ch := make(chan Event)
+	go func() {
+		for _, cur := range batch {
+			ch <- cur
+		}
+		close(ch)
+	}()
+	ret = ch
+	return
 }
 
 func min(l int64, others ...int64) int64 {
