@@ -169,7 +169,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, context.Info)
 	defer ctx.Close()
 
-	cluster, err := startTestCluster(ctx, 3)
+	cluster, err := startTestCluster(ctx, 5)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -697,7 +697,7 @@ func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 			return nil, errors.Wrap(err, "Error opening bolt instance")
 		}
 		ctx.Control().Defer(func(error) {
-			//db.Close() FIXME: NEED TO FIGURE OUT WHY THIS CAUSES SEGFAULT
+			boltdb.CloseAndDelete(db)
 		})
 
 		host, err := joinTestHost(ctx, db, first.Self().Addr)

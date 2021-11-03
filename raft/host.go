@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/boltdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
@@ -33,6 +34,18 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 			ctx.Control().Fail(err)
 		}
 	}()
+
+	if opts.BoltDB == nil {
+		db, err := boltdb.OpenTemp()
+		if err != nil {
+			return nil, err
+		}
+		ctx.Control().Defer(func(error) {
+			boltdb.CloseAndDelete(db)
+		})
+
+		opts = opts.Update(WithBoltDB(db))
+	}
 
 	store, err := NewBoltStore(opts.BoltDB)
 	if err != nil {

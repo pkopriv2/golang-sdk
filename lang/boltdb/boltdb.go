@@ -41,6 +41,6 @@ func Delete(db *bolt.DB) error {
 	return os.RemoveAll(db.Path())
 }
 
-func DeleteAndClose(db *bolt.DB) error {
+func CloseAndDelete(db *bolt.DB) error {
 	return errs.Or(Close(db), Delete(db))
 }
