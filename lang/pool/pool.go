@@ -13,9 +13,9 @@ import (
 type ObjectPool interface {
 	io.Closer
 	Max() int
-	Take() io.Closer
-	TakeTimeout(time.Duration) io.Closer
-	TakeOrCancel(<-chan struct{}) io.Closer
+	Take() (io.Closer, error)
+	TakeTimeout(time.Duration) (io.Closer, error)
+	TakeOrCancel(<-chan struct{}) (io.Closer, error)
 	Return(io.Closer)
 	Fail(io.Closer)
 }
@@ -38,9 +38,6 @@ func NewObjectPool(ctrl context.Control, max int, fn func() (io.Closer, error)) 
 		take: make(chan *chans.Request),
 		ret:  make(chan io.Closer, max),
 	}
-	ctrl.Defer(func(error) {
-		p.closePool()
-	})
 
 	p.start()
 	return p
@@ -81,30 +78,33 @@ func (p *objectPool) Max() int {
 }
 
 func (p *objectPool) Close() error {
-	return p.ctrl.Close()
+	return errs.Or(p.closePool(), p.ctrl.Close())
 }
 
-func (p *objectPool) Take() io.Closer {
-	if raw, err := chans.SendRequest(p.ctrl, p.take, p.ctrl.Closed(), nil); err == nil {
-		return raw.(io.Closer)
+func (p *objectPool) Take() (io.Closer, error) {
+	raw, err := chans.SendRequest(p.ctrl, p.take, p.ctrl.Closed(), nil)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return raw.(io.Closer), nil
 }
 
-func (p *objectPool) TakeOrCancel(cancel <-chan struct{}) (conn io.Closer) {
-	if raw, err := chans.SendRequest(p.ctrl, p.take, cancel, nil); err == nil {
-		return raw.(io.Closer)
+func (p *objectPool) TakeOrCancel(cancel <-chan struct{}) (io.Closer, error) {
+	raw, err := chans.SendRequest(p.ctrl, p.take, cancel, nil)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return raw.(io.Closer), nil
 }
 
-func (p *objectPool) TakeTimeout(dur time.Duration) (conn io.Closer) {
+func (p *objectPool) TakeTimeout(dur time.Duration) (io.Closer, error) {
 	timer := context.NewTimer(p.ctrl, dur)
 	defer timer.Close()
-	if raw, err := chans.SendRequest(p.ctrl, p.take, timer.Closed(), nil); err == nil {
-		return raw.(io.Closer)
+	raw, err := chans.SendRequest(p.ctrl, p.take, timer.Closed(), nil)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return raw.(io.Closer), nil
 }
 
 func (p *objectPool) Fail(c io.Closer) {

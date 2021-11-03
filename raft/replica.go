@@ -10,6 +10,7 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/chans"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
+	"github.com/pkopriv2/golang-sdk/lang/pool"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -45,6 +46,9 @@ type replica struct {
 
 	// data lock (currently using very coarse lock)
 	lock sync.RWMutex
+
+	// a leader pool
+	leaderPool pool.ObjectPool
 
 	// the current term.
 	term term
@@ -157,7 +161,7 @@ func (r *replica) SetTerm(num int64, leader *uuid.UUID, vote *uuid.UUID) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	r.term = term{num, leader, vote}
-	r.logger.Info("Durably storing updated term [%v]", r.term)
+	r.logger.Info("Updated to term [%v]", r.term)
 	return r.Terms.Save(r.Self.Id, r.term)
 }
 

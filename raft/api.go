@@ -1,4 +1,4 @@
-// Kayak allows consumers to utilize a generic, replicated event
+// Raft allows consumers to utilize a generic, replicated event
 // log in order to create highly-resilient, strongly consistent
 // replicated state machines.
 //
@@ -9,7 +9,7 @@
 // protocol are abstracted, it is useful to know some of the high level
 // details.
 //
-// Before any progress can be made in a kayak cluster, the members
+// Before any progress can be made in a raft cluster, the members
 // of the cluster must elect a leader.  Moreover, most interactions
 // require a leader.  Raft uses an election system - based on majority
 // decision - to elect a leader.  Once established, the leader
@@ -85,7 +85,7 @@
 //  * Items are never lost
 //  * Items may arrive multiple times
 //
-// Kayak differs from raft in that it does NOT support full linearizability
+// This implementation differs from raft in that it does NOT support full linearizability
 // with respect to duplicate items.  Therefore, a requirement of every state
 // machine must be idempotent. And just for good measure:
 //
@@ -99,7 +99,7 @@
 // long as that sequence of reads never shows any out of date or partial
 // changes, the system is said to be linearizable.
 //
-// Kayak provides linearizability through the use of what are known as
+// Raft provides linearizability through the use of what are known as
 // "read-barriers".  Machines which should not permit stale reads may
 // use the syncing library to query for a read-barrier.  This represents
 // the lowest entry that has been guaranteed to be applied to a majority
@@ -120,7 +120,6 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/boltdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
-	uuid "github.com/satori/go.uuid"
 )
 
 // Core api errors
@@ -140,49 +139,47 @@ func StartBackground(addr string, fns ...Option) (Host, error) {
 // Starts the first member of a raft cluster.  The given addr MUST be routable by external members
 func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 	opts := buildOptions(fns...)
-
-	db, err := boltdb.Open(opts.StoragePath)
-	if err != nil {
-		return nil, errors.Wrap(err, "Unable to open bolt instance")
-	}
-	ctx.Control().Defer(func(error) {
-		db.Close()
-		if opts.StorageDelete {
-			boltdb.Delete(db)
+	if opts.BoltDB == nil {
+		db, err := boltdb.OpenTemp()
+		if err != nil {
+			return nil, err
 		}
-	})
+		ctx.Control().Defer(func(error) {
+			boltdb.DeleteAndClose(db)
+		})
 
-	host, err := newHost(ctx, addr, opts.Update(
-		WithBoltLogStore(db),
-		WithBoltTermStore(db)))
+		opts = opts.Update(WithBoltDB(db))
+	}
+
+	host, err := newHost(ctx, addr, opts)
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to initialize host")
 	}
 
-	return host, host.Start()
+	return host, host.start()
 }
 
-// Joins a newly initialized member to an existing Kayak cluster.
+// Joins a newly initialized member to an existing raft cluster.
 func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host, error) {
 	opts := buildOptions(fns...)
-
-	db, err := boltdb.Open(opts.StoragePath)
-	if err != nil {
-		return nil, errors.Wrap(err, "Unable to open bolt instance")
-	}
-	ctx.Control().Defer(func(error) {
-		db.Close()
-		if opts.StorageDelete {
-			boltdb.Delete(db)
+	if opts.BoltDB == nil {
+		db, err := boltdb.OpenTemp()
+		if err != nil {
+			return nil, err
 		}
-	})
+		ctx.Control().Defer(func(error) {
+			boltdb.DeleteAndClose(db)
+		})
 
-	host, err := newHost(ctx, addr, opts.Update(
-		WithBoltLogStore(db),
-		WithBoltTermStore(db)))
+		opts = opts.Update(WithBoltDB(db))
+	}
 
-	// FIXME: use all peer addrs.
-	return host, host.Join(peers[0])
+	host, err := newHost(ctx, addr, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return host, host.join(peers)
 }
 
 type Kind int
@@ -220,22 +217,12 @@ type Entry struct {
 	Payload []byte `json:"payload"`
 }
 
-func parseEntry(dec enc.Decoder, raw []byte) (ret Entry, err error) {
-	err = dec.DecodeBinary(raw, &ret)
-	return
-}
-
 func (l Entry) String() string {
 	return fmt.Sprintf("Entry(idx=%v,term=%v,kind=%v,size=%v)", l.Index, l.Term, l.Kind, len(l.Payload))
 }
 
 func (e Entry) parseConfig(dec enc.Decoder) (ret Config, err error) {
 	err = dec.DecodeBinary(e.Payload, &ret)
-	return
-}
-
-func (e Entry) encode(enc enc.Encoder) (ret []byte, err error) {
-	err = enc.EncodeBinary(e, &ret)
 	return
 }
 
@@ -257,14 +244,11 @@ func parseConfig(dec enc.Decoder, data []byte) (ret Config, err error) {
 type Host interface {
 	io.Closer
 
-	// The unique identifier for this peer.
-	Id() uuid.UUID
-
-	// Address of self.
-	Addr() string
+	// Returns the peer representing this host
+	Self() Peer
 
 	// Returns the peer objects of all members in the cluster.
-	Roster() []Peer
+	Roster() Peers
 
 	// Returns the cluster synchronizer.
 	Sync() (Sync, error)

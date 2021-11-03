@@ -197,7 +197,7 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	var err error
 	defer func() {
 		if err != nil {
-			c.logger.Info("Error adding peer [%v].  Removing from sync'ers.", update.Peer)
+			c.logger.Info("Error adding peer [%v].  Removing from syncers.", update.Peer)
 			c.syncer.handleRosterChange(all.Delete(update.Peer))
 		}
 	}()
@@ -547,9 +547,9 @@ func (l *peerSyncer) SetPrevIndexAndTerm(index int64, term int64) {
 }
 
 func (s *peerSyncer) send(cancel <-chan struct{}, fn func(cl *rpcClient) error) error {
-	raw := s.pool.TakeOrCancel(cancel)
-	if raw == nil {
-		return errors.WithStack(errs.CanceledError)
+	raw, err := s.pool.TakeOrCancel(cancel)
+	if err != nil {
+		return err
 	}
 
 	if err := fn(raw.(*rpcClient)); err != nil {

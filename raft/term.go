@@ -17,7 +17,17 @@ type term struct {
 }
 
 func (t term) String() string {
-	return fmt.Sprintf("%v", t.Num)
+	leaderId := "nil"
+	if t.LeaderId != nil {
+		leaderId = t.LeaderId.String()[:8]
+	}
+
+	votedFor := "nil"
+	if t.LeaderId != nil {
+		votedFor = t.VotedFor.String()[:8]
+	}
+
+	return fmt.Sprintf("Term(%v, l=%v, v=%v", t.Num, leaderId, votedFor)
 }
 
 var (
@@ -35,7 +45,7 @@ type TermStore struct {
 	db *bolt.DB
 }
 
-func openTermStore(db *bolt.DB) (*TermStore, error) {
+func NewTermStore(db *bolt.DB) (*TermStore, error) {
 	err := db.Update(func(tx *bolt.Tx) error {
 		return initBoltTermBucket(tx)
 	})

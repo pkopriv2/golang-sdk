@@ -212,7 +212,7 @@ func (c *follower) handleReplication(req *chans.Request) {
 		return
 	}
 
-	c.logger.Debug("Handling replication: %v", len(repl.Items))
+	c.logger.Debug("Handling replication [%v]: %v", repl.PrevLogIndex, len(repl.Items))
 	if repl.Term > c.term.Num || c.term.LeaderId == nil {
 		c.logger.Info("New leader detected [%v]", repl.LeaderId.String()[:8])
 		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})

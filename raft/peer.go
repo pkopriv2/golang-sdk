@@ -36,6 +36,21 @@ func (peers Peers) Contains(p Peer) (ok bool) {
 	return
 }
 
+func SearchPeersById(id uuid.UUID) func(Peer) bool {
+	return func(p Peer) bool {
+		return p.Id == id
+	}
+}
+
+func (peers Peers) First(fn func(p Peer) bool) *Peer {
+	for _, cur := range peers {
+		if fn(cur) {
+			return &cur
+		}
+	}
+	return nil
+}
+
 func (peers Peers) Find(p Peer) int {
 	for i, cur := range peers {
 		if cur.Id == p.Id {

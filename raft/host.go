@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"io"
 	"time"
 
@@ -32,12 +33,12 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		}
 	}()
 
-	store, err := opts.LogStorage()
+	store, err := NewBoltStore(opts.BoltDB)
 	if err != nil {
 		return
 	}
 
-	terms, err := opts.TermStorage()
+	terms, err := NewTermStore(opts.BoltDB)
 	if err != nil {
 		return
 	}
@@ -88,13 +89,9 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 	return
 }
 
-func (h *host) Fail(e error) error {
-	h.ctrl.Fail(e)
-	return h.ctrl.Failure()
-}
-
 func (h *host) Close() error {
-	return h.Fail(h.Leave())
+	h.ctrl.Fail(h.Leave())
+	return h.ctrl.Failure()
 }
 
 func (h *host) Id() uuid.UUID {
@@ -121,7 +118,7 @@ func (h *host) Cluster() []Peer {
 	return h.replica.Cluster()
 }
 
-func (h *host) Roster() []Peer {
+func (h *host) Roster() Peers {
 	return h.replica.Cluster()
 }
 
@@ -141,97 +138,141 @@ func (h *host) Addrs() []string {
 	return addrs
 }
 
-func (h *host) Start() error {
-	becomeCandidate(h.replica)
+func (h *host) start() error {
+	becomeFollower(h.replica)
 	return nil
 }
 
-func (h *host) Join(addr string) error {
-	var err error
-
+func (h *host) join(addrs []string) (err error) {
 	becomeFollower(h.replica)
-	defer func() {
-		if err != nil {
-			h.replica.ctrl.Fail(err)
-			h.ctx.Logger().Error("Error joining: %v", err)
-		}
-	}()
-
-	for attmpt := 0; attmpt < 3; attmpt++ {
-		err = h.tryJoin(addr)
-		if err != nil {
-			h.ctx.Logger().Error("Attempt(%v): Error joining cluster: %v: %v", addr, attmpt, err)
-			continue
-		}
-		break
-	}
-
-	return err
+	return h.tryJoin(addrs)
 }
 
 func (h *host) Leave() error {
-	var err error
-	for attmpt := 0; attmpt < 3; attmpt++ {
-		err = h.tryLeave()
-		if err != nil {
-			h.ctx.Logger().Error("Attempt(%v): Error leaving cluster: %v", attmpt, err)
-			continue
-		}
-		break
-	}
-
+	err := h.tryLeave()
 	h.ctx.Logger().Info("Shutting down: %v", err)
 	h.replica.ctrl.Fail(err)
 	return err
 }
 
-func (h *host) tryJoin(addr string) error {
-	cl, err := dialRpcClient(addr, h.replica.Options)
-	if err != nil {
-		return errors.Wrapf(err, "Error connecting to peer [%v]", addr)
-	}
-	defer cl.Close()
+func (h *host) tryJoin(addrs []string) error {
 
-	status, err := cl.Status()
-	if err != nil {
-		return errors.Wrapf(err, "Error getting cluster status from [%v]", addr)
-	}
-
-	// this may not be necessary...
-	if err := h.replica.SetTerm(status.Term.Num, status.LeaderId, status.LeaderId); err != nil {
-		return errors.Wrap(err, "Error updating term information")
-	}
-	return cl.UpdateRoster(h.replica.Self, true)
-}
-
-func (h *host) tryLeave() error {
-	peer := h.replica.Leader()
-	if peer == nil {
-		return ErrNoLeader
-	}
-
-	cl, err := peer.Dial(h.replica.Options)
-	if err != nil {
-		return err
-	}
-	defer cl.Close()
-	return cl.UpdateRoster(h.replica.Self, false)
-}
-
-func newLeaderPool(self *replica, size int) pool.ObjectPool {
-	return pool.NewObjectPool(self.Ctx.Control(), size, func() (io.Closer, error) {
-		var cl *rpcClient
-		for cl == nil {
-			leader := self.Leader()
-			if leader == nil {
-				time.Sleep(self.ElectionTimeout / 5)
+	errs := []error{}
+	for i := 0; i < 3; i++ {
+		for j := 0; j < len(addrs); j++ {
+			cl, err := dialRpcClient(addrs[j], h.replica.Options)
+			if err != nil {
+				h.ctx.Logger().Info("Unable to dial client [%v]: %v", addrs[j], err)
+				errs = append(errs, err)
 				continue
 			}
 
-			cl, _ = leader.Dial(self.Options)
+			status, err := cl.Status()
+			if err != nil {
+				cl.Close()
+				h.ctx.Logger().Info("Unable to get status [%v]: %v", addrs[j], err)
+				errs = append(errs, err)
+				continue
+			}
+
+			if status.LeaderId == nil {
+				cl.Close()
+				h.ctx.Logger().Info("No leader currently elected [%v]", addrs[j])
+
+				timer := time.After(h.replica.Options.ElectionTimeout)
+				select {
+				case <-h.ctrl.Closed():
+					return ErrClosed
+				case <-timer:
+				}
+				continue
+			}
+
+			leader := status.Config.Peers.First(SearchPeersById(*status.LeaderId))
+			if leader == nil {
+				h.ctx.Logger().Info("Unable to locate leader in roster")
+				continue
+			}
+
+			if status.Self.Id != leader.Id {
+				cl.Close()
+
+				cl, err = leader.Dial(h.replica.Options)
+				if err != nil {
+					errs = append(errs, errors.Wrapf(err, "Error dialing leader [%v]", leader))
+					continue
+				}
+			}
+
+			if err = cl.UpdateRoster(h.replica.Self, true); err != nil {
+				cl.Close()
+				errs = append(errs, errors.Wrapf(err, "Error updating roster [%v]", leader))
+				continue
+			}
+
+			return cl.Close()
 		}
-		return cl, nil
-	})
+	}
+	return fmt.Errorf("Unable to join cluster: %v", errs)
+}
+
+func (h *host) tryLeave() error {
+	for i := 0; i < 5; i++ {
+		leader := h.replica.Leader()
+		if leader == nil {
+			h.ctx.Logger().Info("There isn't a leader currently. Can't leave until one is elected.")
+
+			timer := time.NewTimer(h.replica.Options.ElectionTimeout)
+			select {
+			case <-h.ctrl.Closed():
+				timer.Stop()
+				return ErrClosed
+			case <-timer.C:
+				timer.Stop()
+			}
+			continue
+		}
+
+		cl, err := leader.Dial(h.replica.Options)
+		if err != nil {
+			h.ctx.Logger().Info("Error dialing leader [%v]: %v", leader.Addr, err)
+			cl.Close()
+			continue
+		}
+
+		if err := cl.UpdateRoster(h.replica.Self, false); err != nil {
+			h.ctx.Logger().Info("Error updating roster [%v]: %v", leader.Addr, err)
+			cl.Close()
+			continue
+		}
+
+		return cl.Close()
+	}
+	return nil
+}
+
+func newLeaderPool(self *replica, size int) pool.ObjectPool {
+	return pool.NewObjectPool(self.Ctx.Control(), size,
+		func() (ret io.Closer, err error) {
+			var cl *rpcClient
+			for cl == nil {
+				leader := self.Leader()
+				if leader == nil {
+					timer := time.NewTimer(self.ElectionTimeout)
+					select {
+					case <-self.ctrl.Closed():
+						timer.Stop()
+						return nil, ErrClosed
+					case <-timer.C:
+						timer.Stop()
+						continue
+					}
+				}
+
+				cl, _ = leader.Dial(self.Options)
+			}
+			return cl, nil
+		})
 }
 
 // This is the public facing client.  Only emits committed items.
@@ -298,10 +339,9 @@ func (s *logClient) Snapshot() (int64, EventStream, error) {
 
 func (c *logClient) append(cancel <-chan struct{}, payload []byte, kind Kind) (entry Entry, err error) {
 	for {
-		raw := c.leaderPool.TakeOrCancel(cancel)
-		if raw == nil {
-			err = ErrCanceled
-			return
+		raw, e := c.leaderPool.TakeOrCancel(cancel)
+		if err != nil {
+			continue
 		}
 
 		// FIXME: Implement exponential backoff

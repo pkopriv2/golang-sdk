@@ -47,6 +47,7 @@ func (s *rpcServer) Status(req rpc.Request) rpc.Response {
 	}
 	return rpc.NewStructResponse(s.enc,
 		statusResponse{
+			Self:     s.self.Self,
 			LeaderId: leaderId,
 			Term:     s.self.CurrentTerm(),
 			Config:   Config{s.self.Cluster()}})

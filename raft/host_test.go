@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/boltdb/bolt"
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/boltdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	uuid "github.com/satori/go.uuid"
 	"github.com/stretchr/testify/assert"
@@ -17,7 +19,7 @@ func TestHost_Close(t *testing.T) {
 
 	before := runtime.NumGoroutine()
 
-	host, err := Start(ctx, ":0", WithTmpStorage())
+	host, err := Start(ctx, ":0")
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -55,7 +57,7 @@ func TestHost_Close(t *testing.T) {
 //ctx := context.NewEmptyContext()
 //defer ctx.Close()
 
-//timer := ctx.Timer(30*time.Second)
+//timer := ctx.Timer(30 * time.Second)
 //defer timer.Close()
 
 //host, err := StartTestHost(ctx)
@@ -76,7 +78,7 @@ func TestHost_Close(t *testing.T) {
 //ctx := context.NewContext(conf)
 //defer ctx.Close()
 
-//timer := ctx.Timer(30*time.Second)
+//timer := ctx.Timer(30 * time.Second)
 
 //host, err := StartTestHost(ctx)
 //assert.Nil(t, err)
@@ -100,26 +102,33 @@ func TestHost_Close(t *testing.T) {
 //}
 //}
 
-//func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
-//ctx := context.NewContext(os.Stdout, context.Off)
-//defer ctx.Close()
+func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, context.Info)
+	defer ctx.Close()
 
-//cluster, err := startTestCluster(ctx, 2)
-//if !assert.Nil(t, err) {
-//return
-//}
+	cluster, err := startTestCluster(ctx, 2)
+	if !assert.Nil(t, err) {
+		return
+	}
 
-//timer := context.NewTimer(ctx.Control(), 10*time.Second)
-//defer timer.Close()
+	timer := context.NewTimer(ctx.Control(), 10*time.Second)
+	defer timer.Close()
 
-//host, err := electLeader(timer.Closed(), cluster)
-//assert.Nil(t, err)
+	host, err := electLeader(timer.Closed(), cluster)
+	assert.Nil(t, err)
 
-//assert.NotNil(t, host)
-//}
+	err = syncAll(timer.Closed(), cluster, func(h Host) bool {
+		return h.Roster().Equals(toPeers(cluster))
+	})
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	assert.NotNil(t, host)
+}
 
 func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Debug)
+	ctx := context.NewContext(os.Stdout, context.Off)
 	defer ctx.Close()
 
 	cluster, err := startTestCluster(ctx, 3)
@@ -137,15 +146,18 @@ func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
 }
 
 //func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
-//ctx := context.NewContext(context.NewEmptyConfig())
+//ctx := context.NewContext(os.Stdout, context.Debug)
 //defer ctx.Close()
-//cluster, err := StartTestCluster(ctx, 5)
-//assert.Nil(t, err)
 
-//timer := ctx.Timer(10 * time.Second)
+//cluster, err := startTestCluster(ctx, 5)
+//if !assert.Nil(t, err) {
+//return
+//}
+
+//timer := context.NewTimer(ctx.Control(), 20*time.Second)
 //defer timer.Close()
 
-//host, err := ElectLeader(timer.Closed(), cluster)
+//host, err := electLeader(timer.Closed(), cluster)
 //assert.Nil(t, err)
 //assert.NotNil(t, host)
 //}
@@ -585,12 +597,12 @@ func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
 //}
 //}
 
-func startTestHost(ctx context.Context) (Host, error) {
-	return Start(ctx, ":0", WithTmpStorage())
+func startTestHost(ctx context.Context, db *bolt.DB) (Host, error) {
+	return Start(ctx, ":0", WithBoltDB(db), WithElectionTimeout(1*time.Second))
 }
 
-func joinTestHost(ctx context.Context, peer string) (Host, error) {
-	return Join(ctx, ":0", []string{peer}, WithTmpStorage())
+func joinTestHost(ctx context.Context, db *bolt.DB, peer string) (Host, error) {
+	return Join(ctx, ":0", []string{peer}, WithBoltDB(db), WithElectionTimeout(1*time.Second))
 }
 
 func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
@@ -605,8 +617,15 @@ func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 		}
 	}()
 
-	// start the first
-	first, err := startTestHost(ctx)
+	db, err := boltdb.OpenTemp()
+	if err != nil {
+		return nil, errors.Wrap(err, "Error opening bolt instance")
+	}
+	ctx.Control().Defer(func(error) {
+		//db.Close() FIXME: NEED TO FIGURE OUT WHY THIS CAUSES SEGFAULT
+	})
+
+	first, err := startTestHost(ctx, db)
 	if err != nil {
 		return nil, errors.Wrap(err, "Error starting first host")
 	}
@@ -614,14 +633,14 @@ func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 		first.Close()
 	})
 
-	first, err = electLeader(ctx.Control().Closed(), []Host{first})
-	if first == nil {
-		return nil, errors.Wrap(ErrNoLeader, "First member failed to become leader")
-	}
+	//first, err = electLeader(ctx.Control().Closed(), []Host{first})
+	//if first == nil {
+	//return nil, errors.Wrap(ErrNoLeader, "First member failed to become leader")
+	//}
 
 	hosts := []Host{first}
 	for i := 1; i < size; i++ {
-		host, err := joinTestHost(ctx, first.Addr())
+		host, err := joinTestHost(ctx, db, first.Self().Addr)
 		if err != nil {
 			return nil, errors.Wrapf(err, "Error starting [%v] host", i)
 		}
@@ -660,7 +679,7 @@ func electLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {
 	}
 
 	return first(cluster, func(h Host) bool {
-		return h.Id() == *leader
+		return h.Self().Id == *leader
 	}), nil
 }
 
@@ -675,12 +694,12 @@ func syncMajority(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) 
 				return ErrCanceled
 			}
 
-			if _, ok := done[h.Id()]; ok {
+			if _, ok := done[h.Self().Id]; ok {
 				continue
 			}
 
 			if fn(h) {
-				done[h.Id()] = struct{}{}
+				done[h.Self().Id] = struct{}{}
 				continue
 			}
 
@@ -703,22 +722,29 @@ func syncAll(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) error
 				return ErrCanceled
 			}
 
-			if _, ok := done[h.Id()]; ok {
+			if _, ok := done[h.Self().Id]; ok {
 				continue
 			}
 
 			if fn(h) {
-				done[h.Id()] = struct{}{}
+				done[h.Self().Id] = struct{}{}
 				continue
 			}
 
 			if time.Now().Sub(start) > 10*time.Second {
-				h.(*host).Context().Logger().Info("Still not sync'ed")
+				h.(*host).Context().Logger().Info("Still not synced")
 			}
 		}
 		<-time.After(250 * time.Millisecond)
 	}
 	return nil
+}
+
+func toPeers(cluster []Host) (ret Peers) {
+	for _, h := range cluster {
+		ret = append(ret, h.Self())
+	}
+	return
 }
 
 func first(cluster []Host, fn func(h Host) bool) Host {

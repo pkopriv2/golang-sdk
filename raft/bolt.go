@@ -281,7 +281,6 @@ func putLogEntry(tx *bolt.Tx, logId uuid.UUID, e Entry) error {
 	if err := enc.Json.EncodeBinary(e, &bytes); err != nil {
 		return err
 	}
-
 	return tx.Bucket(logEntryBucket).Put(bin.UUID(logId).Int64(e.Index), bytes)
 }
 

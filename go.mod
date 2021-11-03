@@ -5,7 +5,7 @@ go 1.16
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/Masterminds/squirrel v1.4.0
-	github.com/boltdb/bolt v1.3.1
+	github.com/boltdb/bolt v1.3.0
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/emirpasic/gods v1.12.0
 	github.com/facebookgo/ensure v0.0.0-20200202191622-63f1cf65ac4c // indirect

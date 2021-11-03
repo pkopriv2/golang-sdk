@@ -66,7 +66,6 @@ func (e *entryLog) Commit(pos int64) (actual int64, err error) {
 		if err != nil {
 			return cur
 		}
-
 		return max(cur, min(pos, head))
 	})
 	return

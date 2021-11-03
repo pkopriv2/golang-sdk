@@ -1,7 +1,9 @@
 package raft
 
 import (
-	"github.com/pkopriv2/golang-sdk/lang/context"
+	"io"
+	"time"
+
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 )
 
@@ -12,15 +14,6 @@ type syncer struct {
 
 func newSyncer(pool pool.ObjectPool) *syncer {
 	return &syncer{pool, newRef(-1)}
-}
-
-func (s *syncer) Barrier(cancel <-chan struct{}) (int64, error) {
-	for {
-		val, err := s.tryBarrier(cancel)
-		if err == nil || context.IsClosed(cancel) {
-			return val, nil
-		}
-	}
 }
 
 func (s *syncer) Close() (err error) {
@@ -40,25 +33,46 @@ func (s *syncer) Sync(cancel <-chan struct{}, index int64) error {
 		return ErrClosed
 	}
 
-	if context.IsClosed(cancel) {
-		return ErrCanceled
-	}
-
 	return nil
 }
 
-func (s *syncer) tryBarrier(cancel <-chan struct{}) (val int64, err error) {
-	raw := s.pool.TakeOrCancel(cancel)
-	if raw == nil {
-		return 0, ErrCanceled
-	}
-	defer func() {
+func (s *syncer) Barrier(cancel <-chan struct{}) (val int64, err error) {
+	wait := 50 * time.Millisecond
+	for {
+		if wait < 30*time.Second {
+			wait = wait * 2
+		}
+
+		var raw io.Closer
+		raw, err = s.pool.TakeOrCancel(cancel)
+		if err != nil {
+			timer := time.NewTimer(wait)
+			select {
+			case <-cancel:
+				timer.Stop()
+				return -1, ErrCanceled
+			case <-timer.C:
+				timer.Stop()
+				continue
+			}
+		}
+
+		val, err = raw.(*rpcClient).Barrier()
 		if err != nil {
 			s.pool.Fail(raw)
-		} else {
-			s.pool.Return(raw)
+
+			timer := time.NewTimer(wait)
+			select {
+			case <-cancel:
+				timer.Stop()
+				return -1, ErrCanceled
+			case <-timer.C:
+				timer.Stop()
+				continue
+			}
 		}
-	}()
-	val, err = raw.(*rpcClient).Barrier()
-	return
+
+		s.pool.Return(raw)
+		return
+	}
 }

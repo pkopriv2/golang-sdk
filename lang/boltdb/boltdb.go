@@ -7,6 +7,7 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/afero"
 )
@@ -38,4 +39,8 @@ func Close(db *bolt.DB) error {
 // Deletes the bolt file
 func Delete(db *bolt.DB) error {
 	return os.RemoveAll(db.Path())
+}
+
+func DeleteAndClose(db *bolt.DB) error {
+	return errs.Or(Close(db), Delete(db))
 }
