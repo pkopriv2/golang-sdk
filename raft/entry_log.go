@@ -107,22 +107,6 @@ func (e *entryLog) Insert(batch []Entry) error {
 	return nil
 }
 
-func (e *entryLog) TrimRight(start int64) (err error) {
-	e.head.Update(func(cur int64) int64 {
-		if start > cur {
-			return cur
-		}
-
-		err = e.raw.TrimRight(start)
-		if err != nil {
-			return cur
-		} else {
-			return start - 1
-		}
-	})
-	return
-}
-
 func (e *entryLog) Snapshot() (StoredSnapshot, error) {
 	return e.raw.Snapshot()
 }

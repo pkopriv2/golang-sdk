@@ -183,42 +183,49 @@ func TestHost_Cluster_Append(t *testing.T) {
 	}
 	assert.NotNil(t, leader)
 
-	log, err := cluster[2].Log()
-	if !assert.Nil(t, err) {
-		return
-	}
-
-	l, err := log.Listen(0, 10)
-	if !assert.Nil(t, err) {
-		return
-	}
-	defer l.Close()
-	go func() {
-		for {
-			var e Entry
-			select {
-			case <-timer.Closed():
+	entries := []Entry{}
+	for _, h := range cluster {
+		go func(h Host) {
+			log, err := h.Log()
+			if !assert.Nil(t, err) {
 				return
-			case <-l.Ctrl().Closed():
+			}
+			buf, err := log.Listen(0, 10)
+			if err != nil {
 				return
-			case e = <-l.Data():
 			}
 
-			fmt.Println("Detected committed entry: ", string(e.Payload))
+			for {
+				select {
+				case <-timer.Closed():
+					return
+				case e := <-buf.Data():
+					fmt.Println(fmt.Sprintf("Host(%v): %v", h.Self().Id.String()[:8], string(e.Payload)))
+				}
+			}
+		}(h)
+
+		log, err := h.Log()
+		if err != nil {
+			t.FailNow()
+			return
 		}
-	}()
 
-	entry1, err := log.Append(timer.Closed(), []byte("hello"))
-	if !assert.Nil(t, err) {
-		return
-	}
-	assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(entry1.Index)))
+		for i := 0; i < 3; i++ {
+			e, err := log.Append(timer.Closed(), []byte(fmt.Sprintf("%v", i)))
+			if err != nil {
+				t.FailNow()
+				return
+			}
 
-	entry2, err := log.Append(timer.Closed(), []byte("world"))
-	if !assert.Nil(t, err) {
-		return
+			entries = append(entries, e)
+		}
 	}
-	assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(entry2.Index)))
+
+	for _, e := range entries {
+		assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(e.Index)))
+	}
+
 }
 
 //func TestHost_Cluster_Close(t *testing.T) {

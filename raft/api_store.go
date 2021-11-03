@@ -25,8 +25,6 @@ type LogStore interface {
 
 	InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error
 	InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (StoredSnapshot, error)
-
-	// FIXME: snapshotting is currently broken. Need to be able to install it in chunks
 	NewSnapshot(lastIndex int64, lastTerm int64, data <-chan Event, conf Config) (StoredSnapshot, error)
 }
 
@@ -34,8 +32,6 @@ type StoredLog interface {
 	Id() uuid.UUID
 	Store() LogStore
 	LastIndexAndTerm() (max int64, term int64, err error)
-	TrimRight(start int64) error
-	TrimLeft(end int64) error
 	Scan(beg int64, end int64) ([]Entry, error)
 	Append(data []byte, term int64, k Kind) (Entry, error)
 	Get(index int64) (Entry, bool, error)

@@ -425,58 +425,6 @@ func trimLeftLogEntries(tx *bolt.Tx, logId uuid.UUID, until int64) (err error) {
 	return
 }
 
-func trimRightLogEntries(tx *bolt.Tx, logId uuid.UUID, from int64) (err error) {
-	minIdx, err := getMinIndex(tx, logId)
-	if err != nil {
-		return
-	}
-
-	maxIdx, err := getMaxIndex(tx, logId)
-	if err != nil {
-		return
-	}
-
-	// nothing to trim
-	if minIdx == -1 || maxIdx == -1 {
-		return
-	}
-
-	if from < minIdx {
-		err = errors.Wrapf(ErrOutOfBounds, "Cannot trim right [%v].  From is less than min", from)
-		return
-	}
-
-	if from > maxIdx {
-		err = errors.Wrapf(ErrOutOfBounds, "Cannot trim right [%v].  From is greater than max", from)
-		return
-	}
-
-	for cur := from; cur < maxIdx; cur++ {
-		if err = deleteLogEntry(tx, logId, cur); err != nil {
-			return
-		}
-	}
-
-	newMin := from + 1
-	newMax := maxIdx
-	if from == maxIdx {
-		newMin = -1
-		newMax = -1
-	}
-
-	if err = setMinIndex(tx, logId, newMin); err != nil {
-		err = errors.Wrapf(err, "Error setting min index [%v]", newMin)
-		return
-	}
-
-	if err = setMaxIndex(tx, logId, newMax); err != nil {
-		err = errors.Wrapf(err, "Error setting max index [%v]", newMax)
-		return
-	}
-
-	return
-}
-
 func checkBoltLog(tx *bolt.Tx, id uuid.UUID) bool {
 	raw := tx.Bucket(logBucket).Get(bin.UUID(id))
 	return raw != nil
@@ -604,12 +552,6 @@ func (b *BoltLog) LastIndexAndTerm() (i int64, t int64, e error) {
 func (b *BoltLog) TrimLeft(end int64) error {
 	return b.db.Update(func(tx *bolt.Tx) (e error) {
 		return trimLeftLogEntries(tx, b.Id(), end)
-	})
-}
-
-func (b *BoltLog) TrimRight(start int64) error {
-	return b.db.Update(func(tx *bolt.Tx) (e error) {
-		return trimRightLogEntries(tx, b.Id(), start)
 	})
 }
 
