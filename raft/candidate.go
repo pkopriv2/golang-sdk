@@ -17,7 +17,7 @@ type candidate struct {
 
 func becomeCandidate(replica *replica) {
 	// increment term and vote for self.
-	replica.SetTerm(replica.term.Num+1, nil, &replica.Self.Id)
+	replica.SetTerm(replica.CurrentTerm().Num+1, nil, &replica.Self.Id)
 
 	ctx := replica.Ctx.Sub("Candidate(%v)", replica.CurrentTerm())
 	ctx.Logger().Info("Becoming candidate")
@@ -127,7 +127,7 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 		req.Ack(voteResponse{Term: vote.Term, Granted: false})
 		c.replica.SetTerm(vote.Term, nil, nil)
 		c.ctrl.Close()
-		becomeCandidate(c.replica)
+		becomeFollower(c.replica)
 		return
 	}
 

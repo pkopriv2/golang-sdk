@@ -267,7 +267,7 @@ func (c *leader) handleRequestVote(req *chans.Request) {
 		req.Ack(voteResponse{Term: vote.Term, Granted: false})
 		c.replica.SetTerm(vote.Term, nil, nil)
 		c.ctrl.Close()
-		becomeCandidate(c.replica)
+		becomeFollower(c.replica)
 		return
 	}
 

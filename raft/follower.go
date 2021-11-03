@@ -146,7 +146,7 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 		return
 	}
 
-	// If the replica isn't recognized, deny the vote.
+	// If the replica isn't recognized, deny the vote. Immediately become candidate
 	_, ok := c.replica.FindPeer(vote.Id)
 	if !ok {
 		req.Ack(voteResponse{Term: vote.Term, Granted: false})
