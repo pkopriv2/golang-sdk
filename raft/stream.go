@@ -30,7 +30,7 @@ func (l *snapshotStream) start() {
 			}
 
 			// scan the next batch
-			batch, err := l.snapshot.Scan(i, min(i+l.buf, l.snapshot.Size()))
+			batch, err := l.snapshot.Scan(i, min(i+1+l.buf, l.snapshot.Size()))
 			if err != nil {
 				l.ctrl.Fail(err)
 				return

@@ -51,6 +51,10 @@ func (e *entryLog) Close() error {
 	return e.ctrl.Close()
 }
 
+func (e *entryLog) Store() LogStore {
+	return e.raw.Store()
+}
+
 func (e *entryLog) Head() int64 {
 	return e.head.Get()
 }
@@ -180,46 +184,6 @@ func (e *entryLog) ListenAppends(start int64, buf int64) (Listener, error) {
 	}
 
 	return newRefListener(e, e.head, start, buf), nil
-}
-
-type snapshot struct {
-	raw       StoredSnapshot
-	PrevIndex int64
-	PrevTerm  int64
-}
-
-func (s *snapshot) Size() int64 {
-	return s.raw.Size()
-}
-
-func (s *snapshot) Config() Config {
-	return s.raw.Config()
-}
-
-func (s *snapshot) Events(cancel <-chan struct{}) <-chan Event {
-	ch := make(chan Event)
-	go func() {
-		size := s.raw.Size()
-		for cur := int64(0); cur < size; {
-			batch, err := s.raw.Scan(cur, min(size+1, cur+256))
-			if err != nil {
-				return
-			}
-
-			for _, e := range batch {
-				select {
-				case ch <- e:
-				case <-cancel:
-					return
-				}
-			}
-
-			cur = cur + int64(len(batch))
-		}
-
-		close(ch)
-	}()
-	return ch
 }
 
 type refListener struct {

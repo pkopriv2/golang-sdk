@@ -106,7 +106,7 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 	}
 	c.logger.Debug("Installing snapshot segment [offset=%v,num=%v]", segment.BatchOffset, len(segment.Batch))
 
-	store := c.replica.Log.raw.Store()
+	store := c.replica.Log.Store()
 	if err := store.InstallSnapshotSegment(segment.Id, segment.BatchOffset, segment.Batch); err != nil {
 		req.Fail(err)
 		return
@@ -119,7 +119,7 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 
 	snapshot, err := store.InstallSnapshot(segment.Id, segment.MaxIndex, segment.MaxTerm, segment.Size, segment.Config)
 	if err != nil {
-		c.logger.Error("Error install snapshot segment: %v", segment.Id)
+		c.logger.Error("Error installing snapshot [%v]: %v", segment.Id, err)
 		req.Fail(err)
 		return
 	}
