@@ -13,7 +13,7 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-//// FIXME: Need to discover self address from remote address.
+// FIXME: Need to discover self address from remote address.
 
 // a host simply binds a network service with the core log machine.
 type host struct {

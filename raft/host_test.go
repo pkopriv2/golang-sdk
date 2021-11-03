@@ -685,6 +685,14 @@ func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 
 	hosts := []Host{first}
 	for i := 1; i < size; i++ {
+		db, err := boltdb.OpenTemp()
+		if err != nil {
+			return nil, errors.Wrap(err, "Error opening bolt instance")
+		}
+		ctx.Control().Defer(func(error) {
+			//db.Close() FIXME: NEED TO FIGURE OUT WHY THIS CAUSES SEGFAULT
+		})
+
 		host, err := joinTestHost(ctx, db, first.Self().Addr)
 		if err != nil {
 			return nil, errors.Wrapf(err, "Error starting [%v] host", i)

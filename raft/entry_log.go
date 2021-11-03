@@ -158,11 +158,7 @@ func (e *entryLog) Install(snapshot StoredSnapshot) error {
 
 	last := snapshot.LastIndex()
 	e.head.Update(func(cur int64) int64 {
-		if cur < last {
-			return last
-		} else {
-			return cur
-		}
+		return max(cur, last)
 	})
 
 	return err

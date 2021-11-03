@@ -78,7 +78,18 @@ func putSnapshotEvent(tx *bolt.Tx, snapshotId uuid.UUID, idx int64, e Event) err
 
 // Stores the snapshot event stream into the db.  This implementation breaks the work
 // into chunks to prevent blocking of concurrent reads/writes
-func putSnapshotEvents(db *bolt.DB, snapshotId uuid.UUID, ch <-chan Event) (num int64, err error) {
+func putSnapshotEvents(tx *bolt.Tx, snapshotId uuid.UUID, offset int64, batch []Event) (err error) {
+	for i, e := range batch {
+		if err = putSnapshotEvent(tx, snapshotId, offset+int64(i), e); err != nil {
+			return
+		}
+	}
+	return nil
+}
+
+// Stores the snapshot event stream into the db.  This implementation breaks the work
+// into chunks to prevent blocking of concurrent reads/writes
+func putSnapshotChannel(db *bolt.DB, snapshotId uuid.UUID, ch <-chan Event) (num int64, err error) {
 	num = 0
 	for {
 		chunk := make([]Event, 0, 1024) // TODO: could implement using reusable buffer
@@ -193,7 +204,7 @@ func setMinIndex(tx *bolt.Tx, logId uuid.UUID, min int64) error {
 	return tx.Bucket(logMaxBucket).Put(bin.UUID(logId), bin.Int64(min))
 }
 
-func getActiveSnapshot(tx *bolt.Tx, logId uuid.UUID) (ret uuid.UUID, err error) {
+func getActiveSnapshotId(tx *bolt.Tx, logId uuid.UUID) (ret uuid.UUID, err error) {
 	raw := tx.Bucket(logSnapshotBucket).Get(bin.UUID(logId))
 	if raw == nil {
 		err = errors.Errorf("Missing snapshot id for log [%v]", logId)
@@ -204,18 +215,18 @@ func getActiveSnapshot(tx *bolt.Tx, logId uuid.UUID) (ret uuid.UUID, err error) 
 	return
 }
 
-func setActiveSnapshot(tx *bolt.Tx, logId, snapshotId uuid.UUID) error {
+func setActiveSnapshotId(tx *bolt.Tx, logId, snapshotId uuid.UUID) error {
 	return tx.Bucket(logSnapshotBucket).Put(bin.UUID(logId), bin.UUID(snapshotId))
 }
 
-func swapActiveSnapshot(tx *bolt.Tx, logId uuid.UUID, prev, next boltSnapshotSummary) error {
-	curId, e := getActiveSnapshot(tx, logId)
+func swapActiveSnapshotId(tx *bolt.Tx, logId uuid.UUID, prev, next boltSnapshotSummary) error {
+	curId, e := getActiveSnapshotId(tx, logId)
 	if e != nil {
 		return e
 	}
 
 	if curId != prev.Id {
-		return errors.Wrapf(ErrCompaction, "Cannot swap snapshot [%v] with current [%v].  Current is no longer active.", next, prev)
+		return errors.Wrapf(ErrInvariant, "Cannot swap snapshot [%v] with current [%v].  Current is no longer active.", next, prev)
 	}
 
 	cur, ok, err := getSnapshotSummary(tx, curId)
@@ -224,10 +235,10 @@ func swapActiveSnapshot(tx *bolt.Tx, logId uuid.UUID, prev, next boltSnapshotSum
 	}
 
 	if cur.MaxIndex > next.MaxIndex && cur.MaxTerm >= next.MaxTerm {
-		return errors.Wrapf(ErrCompaction, "Cannot swap snapshot [%v] with current [%v].  It is older", next, cur)
+		return errors.Wrapf(ErrInvariant, "Cannot swap snapshot [%v] with current [%v].  It is older", next, cur)
 	}
 
-	return setActiveSnapshot(tx, logId, next.Id)
+	return setActiveSnapshotId(tx, logId, next.Id)
 }
 
 func getMaxIndexAndTerm(tx *bolt.Tx, logId uuid.UUID) (max int64, term int64, err error) {
@@ -247,7 +258,7 @@ func getMaxIndexAndTerm(tx *bolt.Tx, logId uuid.UUID) (max int64, term int64, er
 	}
 
 	// next, try to get it from the snapshot
-	snapshotId, err := getActiveSnapshot(tx, logId)
+	snapshotId, err := getActiveSnapshotId(tx, logId)
 	if err != nil {
 		return
 	}
@@ -475,7 +486,7 @@ func initBoltLog(tx *bolt.Tx, logId uuid.UUID, snapshotId uuid.UUID) error {
 	e1 := tx.Bucket(logBucket).Put(bin.UUID(logId), []byte{})
 	e2 := setMinIndex(tx, logId, -1)
 	e3 := setMaxIndex(tx, logId, -1)
-	e4 := setActiveSnapshot(tx, logId, snapshotId)
+	e4 := setActiveSnapshotId(tx, logId, snapshotId)
 	return errs.Or(e1, e2, e3, e4)
 }
 
@@ -506,6 +517,16 @@ func (s *BoltStore) NewLog(id uuid.UUID, config Config) (StoredLog, error) {
 
 func (s *BoltStore) NewSnapshot(lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
 	return createBoltSnapshot(s.db, lastIndex, lastTerm, ch, config)
+}
+
+func (s *BoltStore) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret StoredSnapshot, err error) {
+	return installSnapshot(s.db, snapshotId, lastIndex, lastTerm, size, conf)
+}
+
+func (s *BoltStore) InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return putSnapshotEvents(tx, snapshotId, offset, batch)
+	})
 }
 
 // Parent log abstraction
@@ -624,7 +645,7 @@ func (b *BoltLog) Insert(batch []Entry) error {
 
 func (b *BoltLog) SnapshotId() (i uuid.UUID, e error) {
 	e = b.db.View(func(tx *bolt.Tx) error {
-		i, e = getActiveSnapshot(tx, b.Id())
+		i, e = getActiveSnapshotId(tx, b.Id())
 		return e
 	})
 	return
@@ -644,9 +665,13 @@ func (b *BoltLog) Install(s StoredSnapshot) error {
 	if err != nil {
 		return err
 	}
+
+	if cur.Id() == s.Id() {
+		return nil
+	}
 	// swap it.
 	err = b.db.Update(func(tx *bolt.Tx) error {
-		return swapActiveSnapshot(tx, b.Id(), cur.(*BoltSnapshot).raw, s.(*BoltSnapshot).raw)
+		return swapActiveSnapshotId(tx, b.Id(), cur.(*BoltSnapshot).raw, s.(*BoltSnapshot).raw)
 	})
 	if err != nil {
 		return err
@@ -658,9 +683,7 @@ func (b *BoltLog) Install(s StoredSnapshot) error {
 		return err
 	}
 
-	// cur is useless, regardless of whether the delete succeeds
-	defer cur.Delete()
-	return nil
+	return cur.Delete()
 }
 
 type BoltSnapshot struct {
@@ -672,11 +695,24 @@ func createEmptyBoltSnapshot(db *bolt.DB, config Config) (*BoltSnapshot, error) 
 	return createBoltSnapshot(db, -1, -1, newEventChannel([]Event{}), config)
 }
 
+func installSnapshot(db *bolt.DB, snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (ret *BoltSnapshot, err error) {
+	summary := boltSnapshotSummary{snapshotId, lastIndex, lastTerm, size, config}
+	err = db.Update(func(tx *bolt.Tx) error {
+		return putSnapshotSummary(tx, summary)
+	})
+	if err != nil {
+		return
+	}
+
+	ret = &BoltSnapshot{db, summary}
+	return
+}
+
 // FIXME: Cleanup erroneous snapshot installations
 func createBoltSnapshot(db *bolt.DB, lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (ret *BoltSnapshot, err error) {
 	snapshotId := uuid.NewV1()
 
-	num, err := putSnapshotEvents(db, snapshotId, ch)
+	num, err := putSnapshotChannel(db, snapshotId, ch)
 	if err != nil {
 		return
 	}

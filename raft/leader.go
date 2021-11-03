@@ -368,7 +368,13 @@ func (s *logSyncer) spawnSyncer(p Peer) *peerSyncer {
 				return
 			}
 
-			s.logger.Info("Restarting syncer: %v", p)
+			select {
+			case <-s.ctrl.Closed():
+				return
+			case <-time.After(500 * time.Millisecond):
+			}
+
+			s.logger.Info("Syncer [%v] closed: %v", p, sync.ctrl.Failure())
 			s.handleRosterChange(s.self.Cluster())
 			return
 		case <-s.ctrl.Closed():
@@ -597,7 +603,7 @@ func (s *peerSyncer) start() {
 				err := s.send(s.ctrl.Closed(), func(cl *rpcClient) error {
 					prev, ok, err = s.sendBatch(cl, prev, next)
 					if err != nil {
-						return err
+						return errors.Wrapf(err, "Error sending batch [prev=%v, next=%v]", prev.Index, next)
 					}
 
 					// if everything was ok, advance the index and term
@@ -609,6 +615,7 @@ func (s *peerSyncer) start() {
 					s.logger.Info("Too far behind [%v,%v]. Installing snapshot.", prev.Index, prev.Term)
 					prev, err = s.sendSnapshotToClient(cl)
 					if err != nil {
+						s.logger.Error("Error: %v", err)
 						return err
 					}
 
@@ -717,7 +724,7 @@ func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry,
 	// send the append request.
 	resp, err := cl.Replicate(newReplication(s.self.Self.Id, s.term.Num, prev.Index, prev.Term, batch, s.self.Log.Committed()))
 	if err != nil {
-		return prev, false, err
+		return prev, false, errors.Wrapf(err, "Error replicating batch [prev=%v,num=%v]", prev.Index, len(batch))
 	}
 
 	// make sure we're still a leader.
@@ -754,14 +761,15 @@ func (l *peerSyncer) sendSnapshot(cl *rpcClient, snapshot StoredSnapshot) error 
 	size := snapshot.Size()
 	sendSegment := func(cl *rpcClient, offset int64, batch []Event) error {
 		segment := installSnapshotRequest{
-			l.self.Self.Id,
-			l.term.Num,
-			snapshot.Config(),
-			size,
-			snapshot.LastIndex(),
-			snapshot.LastTerm(),
-			offset,
-			batch}
+			LeaderId:    l.self.Self.Id,
+			Id:          snapshot.Id(),
+			Term:        l.term.Num,
+			Config:      snapshot.Config(),
+			Size:        size,
+			MaxIndex:    snapshot.LastIndex(),
+			MaxTerm:     snapshot.LastTerm(),
+			BatchOffset: offset,
+			Batch:       batch}
 
 		resp, err := cl.InstallSnapshotSegment(segment)
 		if err != nil {
@@ -769,10 +777,6 @@ func (l *peerSyncer) sendSnapshot(cl *rpcClient, snapshot StoredSnapshot) error 
 		}
 
 		if resp.Term > l.term.Num || !resp.Success {
-			return ErrNotLeader
-		}
-
-		if !resp.Success {
 			return ErrNotLeader
 		}
 
@@ -798,7 +802,7 @@ func (l *peerSyncer) sendSnapshot(cl *rpcClient, snapshot StoredSnapshot) error 
 
 		err = sendSegment(cl, beg, batch)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "Error sending batch [%v, %v]", beg, end)
 		}
 
 		i += int64(len(batch))

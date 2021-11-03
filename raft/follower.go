@@ -104,44 +104,28 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 		req.Ack(installSnapshotResponse{Term: c.term.Num, Success: false})
 		return
 	}
+	c.logger.Debug("Installing snapshot segment [offset=%v,num=%v]", segment.BatchOffset, len(segment.Batch))
 
-	req.Ack(installSnapshotResponse{Term: segment.Term, Success: true})
+	store := c.replica.Log.raw.Store()
+	if err := store.InstallSnapshotSegment(segment.Id, segment.BatchOffset, segment.Batch); err != nil {
+		req.Fail(err)
+		return
+	}
 
-	//if data == nil {
-	//data, done = c.startSnapshotStream(segment)
-	//offset = 0
-	//}
+	if segment.BatchOffset+int64(len(segment.Batch)) < segment.Size {
+		req.Ack(installSnapshotResponse{Term: c.term.Num, Success: true})
+		return
+	}
 
-	//if segment.BatchOffset != offset {
-	//close(data)
-	//data, done = c.startSnapshotStream(segment)
-	//offset = 0
-	//}
+	snapshot, err := store.InstallSnapshot(segment.Id, segment.MaxIndex, segment.MaxTerm, segment.Size, segment.Config)
+	if err != nil {
+		c.logger.Error("Error install snapshot segment: %v", segment.Id)
+		req.Fail(err)
+		return
+	}
 
-	//c.logger.Info("Installing snapshot: %v", segment)
-	//if err := c.streamSnapshotSegment(data, segment); err != nil {
-	//req.Fail(err)
-	//return data, done, offset
-	//}
-
-	//c.logger.Error("Successfully installed segment: [%v/%v]", offset, segment.Size)
-
-	//offset += int64(len(segment.Batch))
-	//if offset < segment.Size {
-	//req.Ack(installSnapshotResponse{Term: c.term.Num, Success: true})
-	//return data, done, offset
-	//}
-
-	//select {
-	//case r := <-done.Acked():
-	//req.Ack(r)
-	//case e := <-done.Failed():
-	//req.Fail(e)
-	//case <-c.ctrl.Closed():
-	//req.Fail(ErrClosed)
-	//}
-
-	//return nil, nil, 0
+	c.logger.Info("Successfully installed snapshot [id=%v,size=%v]", snapshot.Id().String()[:8], snapshot.Size())
+	req.Ack(installSnapshotResponse{Term: c.term.Num, Success: true})
 }
 
 func (c *follower) handleRequestVote(req *chans.Request) {
@@ -149,22 +133,19 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 
 	c.logger.Debug("Handling request vote [%v]", vote)
 
-	// FIXME: Lots of duplicates here....condense down
-
-	// handle: previous term vote.  (immediately decline.)
+	// previous term vote.  (immediately decline.)
 	if vote.Term < c.term.Num {
 		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
 		return
 	}
 
-	// handle: current term vote.  (accept if no vote and if candidate log is as long as ours)
+	// current term vote.  (accept if no vote and if candidate log is as long as ours)
 	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {
 		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
 		return
 	}
 
-	c.logger.Debug("Current log max: %v", maxIndex)
 	if vote.Term == c.term.Num {
 		if c.term.VotedFor == nil && vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
 			c.logger.Debug("Voting for candidate [%v]", vote.Id)
@@ -205,6 +186,8 @@ func (c *follower) handleReplication(req *chans.Request) {
 		req.Ack(replicateResponse{Term: c.term.Num, Success: false})
 		return
 	}
+
+	c.logger.Debug("Handling replication [prevIndex=%v, prevTerm=%v]", repl.PrevLogIndex, repl.PrevLogTerm)
 
 	hint, _, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {

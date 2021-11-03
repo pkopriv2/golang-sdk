@@ -94,6 +94,7 @@ type appendEventResponse struct {
 
 type installSnapshotRequest struct {
 	LeaderId    uuid.UUID `json:"leader_id"`
+	Id          uuid.UUID `json:"id"`
 	Term        int64     `json:"term"`
 	Config      Config    `json:"config"`
 	Size        int64     `json:"size"`
