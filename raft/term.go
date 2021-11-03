@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/boltdb/bolt"
+	"github.com/pkopriv2/golang-sdk/lang/bin"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 	uuid "github.com/satori/go.uuid"
@@ -57,12 +58,12 @@ func NewTermStore(db *bolt.DB) (*TermStore, error) {
 
 func (t *TermStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
 	err = t.db.View(func(tx *bolt.Tx) (err error) {
-		bytes := tx.Bucket(termIdBucket).Get([]byte(addr))
+		bytes := tx.Bucket(termIdBucket).Get(bin.String(addr))
 		if bytes == nil {
 			return
 		}
 
-		id, err = uuid.FromBytes(tx.Bucket(termIdBucket).Get([]byte(addr)))
+		id, err = uuid.FromBytes(bytes)
 		if err != nil {
 			return
 		}
@@ -75,11 +76,11 @@ func (t *TermStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
 
 func (t *TermStore) SetId(addr string, id uuid.UUID) error {
 	return t.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(termIdBucket).Put([]byte(addr), id.Bytes())
+		return tx.Bucket(termIdBucket).Put(bin.String(addr), id.Bytes())
 	})
 }
 
-func (t *TermStore) Get(id uuid.UUID) (term term, ok bool, err error) {
+func (t *TermStore) GetTerm(id uuid.UUID) (term term, ok bool, err error) {
 	var bytes []byte
 	err = t.db.View(func(tx *bolt.Tx) error {
 		bytes = tx.Bucket(termBucket).Get(id.Bytes())

@@ -38,11 +38,11 @@ func newServer(ctx context.Context, self *replica, listener net.Listener) (rpc.S
 }
 
 func (s *rpcServer) Status(req rpc.Request) rpc.Response {
-	resp := statusResponse{
-		Self:   s.self.Self,
-		Term:   s.self.CurrentTerm(),
-		Config: Config{s.self.Cluster()}}
-	return rpc.NewStructResponse(s.enc, resp)
+	return rpc.NewStructResponse(s.enc,
+		statusResponse{
+			Self:   s.self.Self,
+			Term:   s.self.CurrentTerm(),
+			Config: Config{s.self.Cluster()}})
 }
 
 func (s *rpcServer) ReadBarrier(req rpc.Request) rpc.Response {

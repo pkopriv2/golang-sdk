@@ -137,7 +137,7 @@ func (r *replica) Close() error {
 
 func (r *replica) start() error {
 	// retrieve the term from the durable store
-	term, _, err := r.Terms.Get(r.Self.Id)
+	term, _, err := r.Terms.GetTerm(r.Self.Id)
 	if err != nil {
 		return errors.Wrapf(err, "Unable to get latest term [%v]", r.Self.Id)
 	}

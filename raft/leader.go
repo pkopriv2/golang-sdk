@@ -775,14 +775,13 @@ func (s *peerSyncer) sendSnapshotToClient(cl *rpcClient) (Entry, error) {
 
 // sends the snapshot to the client
 func (l *peerSyncer) sendSnapshot(cl *rpcClient, snapshot StoredSnapshot) error {
-	size := snapshot.Size()
 	sendSegment := func(cl *rpcClient, offset int64, batch []Event) error {
 		segment := installSnapshotRequest{
 			LeaderId:    l.self.Self.Id,
-			Id:          snapshot.Id(),
 			Term:        l.term.Num,
+			Id:          snapshot.Id(),
 			Config:      snapshot.Config(),
-			Size:        size,
+			Size:        snapshot.Size(),
 			MaxIndex:    snapshot.LastIndex(),
 			MaxTerm:     snapshot.LastTerm(),
 			BatchOffset: offset,
@@ -800,6 +799,7 @@ func (l *peerSyncer) sendSnapshot(cl *rpcClient, snapshot StoredSnapshot) error 
 		return nil
 	}
 
+	size := snapshot.Size()
 	if size == 0 {
 		return sendSegment(cl, 0, []Event{})
 	}
@@ -810,7 +810,7 @@ func (l *peerSyncer) sendSnapshot(cl *rpcClient, snapshot StoredSnapshot) error 
 		}
 
 		beg, end := i, min(size, i+256)
-		l.logger.Info("Sending snapshot segment [%v,%v]", beg, end)
+		l.logger.Debug("Sending snapshot segment [%v,%v]", beg, end)
 
 		batch, err := snapshot.Scan(beg, end)
 		if err != nil {
