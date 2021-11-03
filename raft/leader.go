@@ -132,8 +132,8 @@ func (c *leader) handleInstallSnapshot(req *chans.Request) {
 
 	c.replica.SetTerm(snapshot.Term, &snapshot.LeaderId, &snapshot.LeaderId)
 	req.Ack(installSnapshotResponse{Term: snapshot.Term, Success: false})
-	becomeFollower(c.replica)
 	c.ctrl.Close()
+	becomeFollower(c.replica)
 }
 
 // leaders do not accept replication requests
@@ -146,8 +146,8 @@ func (c *leader) handleReplication(req *chans.Request) {
 
 	c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
 	req.Ack(replicateResponse{Term: repl.Term, Success: false})
-	becomeFollower(c.replica)
 	c.ctrl.Close()
+	becomeFollower(c.replica)
 }
 
 func (c *leader) handleReadBarrier(req *chans.Request) {
@@ -157,8 +157,8 @@ func (c *leader) handleReadBarrier(req *chans.Request) {
 	}
 
 	req.Fail(ErrNotLeader)
-	becomeFollower(c.replica)
 	c.ctrl.Close()
+	becomeFollower(c.replica)
 }
 
 func (c *leader) handleLocalAppend(req *chans.Request) {

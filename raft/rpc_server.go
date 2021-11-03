@@ -119,8 +119,9 @@ func (s *rpcServer) Append(raw rpc.Request) rpc.Response {
 		return rpc.NewErrorResponse(err)
 	}
 
-	return rpc.NewStructResponse(s.enc, appendEventResponse{
-		Index: item.Index,
-		Term:  item.Term,
-	})
+	return rpc.NewStructResponse(s.enc,
+		appendEventResponse{
+			Index: item.Index,
+			Term:  item.Term,
+		})
 }

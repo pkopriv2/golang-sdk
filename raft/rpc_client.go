@@ -14,7 +14,9 @@ type rpcClient struct {
 
 func dialRpcClient(addr string, opts Options) (ret *rpcClient, err error) {
 	client, err := rpc.Dial(rpc.NewDialer(opts.Network, addr),
+		rpc.WithReadTimeout(opts.ReadTimeout),
 		rpc.WithDialTimeout(opts.DialTimeout),
+		rpc.WithSendTimeout(opts.SendTimeout),
 		rpc.WithEncoder(opts.Encoder))
 	if err != nil {
 		return

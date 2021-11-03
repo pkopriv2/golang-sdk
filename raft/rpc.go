@@ -30,10 +30,6 @@ type rosterUpdateRequest struct {
 	Join bool `json:"join"`
 }
 
-// Internal append events request.  Requests are put onto the internal member
-// channel and consumed by the currently active sub-machine.
-//
-// Append events ONLY come from members who are leaders. (Or think they are leaders)
 type replicateRequest struct {
 	LeaderId     uuid.UUID `json:"leader_id"`
 	Term         int64     `json:"term"`
@@ -43,9 +39,6 @@ type replicateRequest struct {
 	Commit       int64     `json:"commit"`
 }
 
-// Internal response type.  These are returned through the
-// request 'ack'/'response' channels by the currently active
-// sub-machine component.
 type replicateResponse struct {
 	Term    int64 `json:"term"`
 	Success bool  `json:"success"`
@@ -60,10 +53,6 @@ func newReplication(id uuid.UUID, term int64, prevIndex int64, prevTerm int64, i
 	return replicateRequest{id, term, prevIndex, prevTerm, items, commit}
 }
 
-// Internal request vote.  Requests are put onto the internal member
-// channel and consumed by the currently active sub-machine.
-//
-// Request votes ONLY come from members who are candidates.
 type voteRequest struct {
 	Id          uuid.UUID `json:"id"`
 	Term        int64     `json:"term"`
@@ -76,16 +65,11 @@ type voteResponse struct {
 	Granted bool  `json:"granted"`
 }
 
-// Client append request.  Requests are put onto the internal member
-// channel and consumed by the currently active sub-machine.
-//
-// These come from active clients.
 type appendEventRequest struct {
 	Event []byte `json:"event"`
 	Kind  Kind   `json:"kind"`
 }
 
-// append event response type.
 type appendEventResponse struct {
 	Index int64 `json:"index"`
 	Term  int64 `json:"term"`
