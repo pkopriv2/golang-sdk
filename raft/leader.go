@@ -206,13 +206,13 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	all = all.Add(update.Peer)
 	c.replica.Roster.Set(all)
 	c.syncer.handleRosterChange(all)
-	//sync := c.syncer.GetSyncer(update.Peer.Id)
+	sync := c.syncer.GetSyncer(update.Peer.Id)
 
-	//_, err = sync.heartbeat(req.Canceled())
-	//if err != nil {
-	//req.Fail(err)
-	//return
-	//}
+	_, err = sync.heartbeat(req.Canceled())
+	if err != nil {
+		req.Fail(err)
+		return
+	}
 
 	//score, err := sync.score(req.Canceled())
 	//if err != nil {
@@ -364,7 +364,7 @@ func (s *logSyncer) spawnSyncer(p Peer) *peerSyncer {
 		case <-sync.ctrl.Closed():
 			if errs.Is(sync.ctrl.Failure(), ErrNotLeader) {
 				s.logger.Info("No longer leader. Shutting down")
-				s.ctrl.Fail(sync.ctrl.Failure())
+				s.ctrl.Fail(ErrNotLeader)
 				return
 			}
 
@@ -491,7 +491,7 @@ func (s *logSyncer) SetSyncers(syncers map[uuid.UUID]*peerSyncer) {
 	s.syncers = syncers
 }
 
-// a peer syncer is responsible for sync'ing a single peer.
+// a peer syncer is responsible for sync'ing a single peer's log.
 type peerSyncer struct {
 	logger    context.Logger
 	ctrl      context.Control

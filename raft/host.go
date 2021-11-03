@@ -151,7 +151,6 @@ func (h *host) join(addrs []string) (err error) {
 
 func (h *host) leave() error {
 	err := h.tryLeave()
-	h.ctx.Logger().Info("Shutting down: %v", err)
 	h.replica.ctrl.Fail(err)
 	return err
 }

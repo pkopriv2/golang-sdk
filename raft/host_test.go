@@ -16,11 +16,12 @@ import (
 )
 
 func TestHost_Close(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Off)
+	ctx := context.NewContext(os.Stdout, context.Debug)
+	defer ctx.Close()
 
 	before := runtime.NumGoroutine()
 
-	host, err := Start(ctx, ":0")
+	host, err := Start(ctx, ":0", WithElectionTimeout(1*time.Second))
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -165,7 +166,7 @@ func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 }
 
 func TestHost_Cluster_Append(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Debug)
+	ctx := context.NewContext(os.Stdout, context.Info)
 	defer ctx.Close()
 
 	cluster, err := startTestCluster(ctx, 3)
@@ -182,17 +183,42 @@ func TestHost_Cluster_Append(t *testing.T) {
 	}
 	assert.NotNil(t, leader)
 
-	log, err := leader.Log()
+	log, err := cluster[2].Log()
 	if !assert.Nil(t, err) {
 		return
 	}
 
-	entry, err := log.Append(timer.Closed(), []byte("hello"))
+	l, err := log.Listen(0, 10)
 	if !assert.Nil(t, err) {
 		return
 	}
-	fmt.Println("Appended to log: ", entry.Index, entry.Term)
-	assert.Nil(t, syncMajority(timer.Closed(), cluster, syncTo(entry.Index)))
+	defer l.Close()
+	go func() {
+		for {
+			var e Entry
+			select {
+			case <-timer.Closed():
+				return
+			case <-l.Ctrl().Closed():
+				return
+			case e = <-l.Data():
+			}
+
+			fmt.Println("Detected committed entry: ", string(e.Payload))
+		}
+	}()
+
+	entry1, err := log.Append(timer.Closed(), []byte("hello"))
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(entry1.Index)))
+
+	entry2, err := log.Append(timer.Closed(), []byte("world"))
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(entry2.Index)))
 }
 
 //func TestHost_Cluster_Close(t *testing.T) {
@@ -765,8 +791,6 @@ func syncTo(index int64) func(p Host) bool {
 		if err != nil {
 			return false
 		}
-
-		fmt.Println(fmt.Sprintf("Host(%v). Log currently at: %v", p.Self(), log.Committed()))
 		return log.Committed() >= index
 	}
 }
