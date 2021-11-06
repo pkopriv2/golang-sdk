@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/pkopriv2/golang-sdk/lang/boltdb"
+	"github.com/pkopriv2/golang-sdk/lang/badgerdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
@@ -35,24 +35,24 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		}
 	}()
 
-	if opts.BoltDB == nil {
-		db, err := boltdb.OpenTemp()
+	if opts.BadgerDB == nil {
+		db, err := badgerdb.OpenTemp()
 		if err != nil {
 			return nil, err
 		}
 		ctx.Control().Defer(func(error) {
-			boltdb.CloseAndDelete(db)
+			badgerdb.CloseAndDelete(db)
 		})
 
-		opts = opts.Update(WithBoltDB(db))
+		opts = opts.Update(WithBadgerDB(db))
 	}
 
-	store, err := NewBoltStore(opts.BoltDB)
+	store, err := NewBadgerStore(opts.BadgerDB)
 	if err != nil {
 		return
 	}
 
-	terms, err := NewTermStore(opts.BoltDB)
+	terms, err := NewTermStore(opts.BadgerDB)
 	if err != nil {
 		return
 	}
@@ -138,7 +138,7 @@ func (h *host) Sync() (Sync, error) {
 }
 
 func (h *host) Log() (Log, error) {
-	return newLogClient(h.replica, h.leaderPool), nil
+	return newLogClient(h.ctx, h.replica, h.leaderPool), nil
 }
 
 func (h *host) start() error {
@@ -305,8 +305,8 @@ type logClient struct {
 	self       *replica
 }
 
-func newLogClient(self *replica, leaderPool pool.ObjectPool) *logClient {
-	ctx := self.Ctx.Sub("LogClient")
+func newLogClient(ctx context.Context, self *replica, leaderPool pool.ObjectPool) *logClient {
+	ctx = ctx.Sub("LogClient")
 	return &logClient{
 		id:         self.Self.Id,
 		ctx:        ctx,

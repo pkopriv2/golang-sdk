@@ -155,7 +155,9 @@ func ParseInt64(raw []byte) (ret int64, err error) {
 
 func encodeBinary(val interface{}) []byte {
 	buf := &bytes.Buffer{}
-	binary.Write(buf, binary.BigEndian, val)
+	if err := binary.Write(buf, binary.BigEndian, val); err != nil {
+		panic(err)
+	}
 	return buf.Bytes()
 }
 

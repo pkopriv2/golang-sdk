@@ -3,10 +3,9 @@ package raft
 import (
 	"fmt"
 
-	"github.com/boltdb/bolt"
+	badger "github.com/dgraph-io/badger/v3"
 	"github.com/pkopriv2/golang-sdk/lang/bin"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -32,34 +31,30 @@ func (t term) String() string {
 }
 
 var (
-	termBucket   = []byte("raft.term")
-	termIdBucket = []byte("raft.term.id")
+	termPrefix   = bin.String("term")
+	termIdPrefix = bin.String("term.id")
 )
 
-func initBoltTermBucket(tx *bolt.Tx) error {
-	_, e1 := tx.CreateBucketIfNotExists(termBucket)
-	_, e2 := tx.CreateBucketIfNotExists(termIdBucket)
-	return errs.Or(e1, e2)
-}
-
 type TermStore struct {
-	db *bolt.DB
+	db *badger.DB
 }
 
-func NewTermStore(db *bolt.DB) (*TermStore, error) {
-	err := db.Update(func(tx *bolt.Tx) error {
-		return initBoltTermBucket(tx)
-	})
-	if err != nil {
-		return nil, err
-	}
+func NewTermStore(db *badger.DB) (*TermStore, error) {
 	return &TermStore{db}, nil
 }
 
 func (t *TermStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
-	err = t.db.View(func(tx *bolt.Tx) (err error) {
-		bytes := tx.Bucket(termIdBucket).Get(bin.String(addr))
-		if bytes == nil {
+	err = t.db.View(func(tx *badger.Txn) (err error) {
+		item, err := tx.Get(termIdPrefix.String(addr))
+		if err != nil {
+			if err == badger.ErrKeyNotFound {
+				err = nil
+			}
+			return
+		}
+
+		bytes, err := item.ValueCopy(nil)
+		if err != nil {
 			return
 		}
 
@@ -75,33 +70,38 @@ func (t *TermStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
 }
 
 func (t *TermStore) SetId(addr string, id uuid.UUID) error {
-	return t.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(termIdBucket).Put(bin.String(addr), id.Bytes())
+	return t.db.Update(func(tx *badger.Txn) error {
+		return tx.Set(termIdPrefix.String(addr), id.Bytes())
 	})
 }
 
 func (t *TermStore) GetTerm(id uuid.UUID) (term term, ok bool, err error) {
-	var bytes []byte
-	err = t.db.View(func(tx *bolt.Tx) error {
-		bytes = tx.Bucket(termBucket).Get(id.Bytes())
-		return nil
-	})
-	if bytes != nil {
-		if err = enc.Json.DecodeBinary(bytes, &term); err != nil {
+	err = t.db.View(func(tx *badger.Txn) (err error) {
+		item, err := tx.Get(termPrefix.UUID(id))
+		if err != nil {
+			if err == badger.ErrKeyNotFound {
+				err = nil
+			}
+		}
+		return
+
+		bytes, err := item.ValueCopy(nil)
+		if err != nil {
 			return
 		}
 
-		ok = true
-	}
+		ok, err = true, enc.Json.DecodeBinary(bytes, &term)
+		return
+	})
 	return
 }
 
-func (t *TermStore) Save(id uuid.UUID, tm term) error {
-	var bytes []byte
-	if err := enc.Json.EncodeBinary(tm, &bytes); err != nil {
-		return err
-	}
-	return t.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(termBucket).Put(id.Bytes(), bytes)
+func (t *TermStore) Save(id uuid.UUID, term term) error {
+	return t.db.Update(func(tx *badger.Txn) (err error) {
+		bytes, err := enc.Encode(enc.Json, term)
+		if err != nil {
+			return
+		}
+		return tx.Set(bin.UUID(id), bytes)
 	})
 }

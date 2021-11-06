@@ -9,6 +9,8 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
+// This has been replaced by a badger implementation
+
 // Bolt implementation of raft log store.
 var (
 	logBucket            = []byte("raft.log")
@@ -32,6 +34,301 @@ func initBoltBuckets(db *bolt.DB) (err error) {
 		_, e7 := tx.CreateBucketIfNotExists(snapshotEventsBucket)
 		return errs.Or(e1, e2, e3, e4, e5, e6, e7)
 	})
+}
+
+func initBoltLog(tx *bolt.Tx, logId uuid.UUID, snapshotId uuid.UUID) error {
+	e1 := tx.Bucket(logBucket).Put(bin.UUID(logId), []byte{})
+	e2 := setMinIndex(tx, logId, -1)
+	e3 := setMaxIndex(tx, logId, -1)
+	e4 := setActiveSnapshotId(tx, logId, snapshotId)
+	return errs.Or(e1, e2, e3, e4)
+}
+
+// Store impl.
+type BoltStore struct {
+	db *bolt.DB
+}
+
+func NewBoltStore(db *bolt.DB) (LogStore, error) {
+	if err := initBoltBuckets(db); err != nil {
+		return nil, err
+	}
+
+	return &BoltStore{db}, nil
+}
+
+func (s *BoltStore) GetLog(id uuid.UUID) (StoredLog, error) {
+	log, err := openBoltLog(s.db, id)
+	if err != nil || log == nil {
+		return nil, err
+	}
+	return log, nil
+}
+
+func (s *BoltStore) NewLog(id uuid.UUID, config Config) (StoredLog, error) {
+	return createBoltLog(s.db, id, config)
+}
+
+func (s *BoltStore) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
+	return createBoltSnapshot(s.db, lastIndex, lastTerm, ch, cancel, config)
+}
+
+func (s *BoltStore) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret StoredSnapshot, err error) {
+	return installSnapshot(s.db, snapshotId, lastIndex, lastTerm, size, conf)
+}
+
+func (s *BoltStore) InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return putSnapshotEvents(tx, snapshotId, offset, batch)
+	})
+}
+
+// Parent log abstraction
+type BoltLog struct {
+	db *bolt.DB
+	id uuid.UUID
+}
+
+func createBoltLog(db *bolt.DB, id uuid.UUID, config Config) (log *BoltLog, err error) {
+	s, err := createEmptyBoltSnapshot(db, config)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			s.Delete()
+		}
+	}()
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		if checkBoltLog(tx, id) {
+			return errors.Wrapf(ErrInvariant, "Log [%v] already exists", id)
+		}
+		return initBoltLog(tx, id, s.Id())
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &BoltLog{db, id}, nil
+}
+
+func openBoltLog(db *bolt.DB, id uuid.UUID) (log *BoltLog, err error) {
+	err = db.View(func(tx *bolt.Tx) error {
+		if checkBoltLog(tx, id) {
+			log = &BoltLog{db, id}
+		}
+		return nil
+	})
+	return
+}
+
+func (b *BoltLog) Id() uuid.UUID {
+	return b.id
+}
+
+func (b *BoltLog) Store() LogStore {
+	return &BoltStore{b.db}
+}
+
+func (b *BoltLog) Min() (m int64, e error) {
+	e = b.db.View(func(tx *bolt.Tx) error {
+		m, e = getMinIndex(tx, b.Id())
+		return e
+	})
+	return
+}
+
+func (b *BoltLog) Max() (m int64, e error) {
+	e = b.db.View(func(tx *bolt.Tx) error {
+		m, e = getMaxIndex(tx, b.Id())
+		return e
+	})
+	return
+}
+
+func (b *BoltLog) LastIndexAndTerm() (i int64, t int64, e error) {
+	e = b.db.View(func(tx *bolt.Tx) error {
+		i, t, e = getMaxIndexAndTerm(tx, b.Id())
+		return e
+	})
+	return
+}
+
+func (b *BoltLog) TrimLeft(end int64) error {
+	return b.db.Update(func(tx *bolt.Tx) (e error) {
+		return trimLeftLogEntries(tx, b.Id(), end)
+	})
+}
+
+func (b *BoltLog) Scan(beg int64, end int64) (i []Entry, e error) {
+	e = b.db.View(func(tx *bolt.Tx) error {
+		i, e = getLogEntries(tx, b.Id(), beg, end)
+		return e
+	})
+	return
+}
+
+func (b *BoltLog) Append(event []byte, term int64, kind Kind) (i Entry, e error) {
+	e = b.db.Update(func(tx *bolt.Tx) error {
+		i, e = appendLogEntry(tx, b.Id(), event, term, kind)
+		return e
+	})
+	return
+}
+
+func (b *BoltLog) Get(index int64) (i Entry, o bool, e error) {
+	e = b.db.View(func(tx *bolt.Tx) error {
+		i, o, e = getLogEntry(tx, b.Id(), index)
+		return e
+	})
+	return
+}
+
+func (b *BoltLog) Insert(batch []Entry) error {
+	err := b.db.Update(func(tx *bolt.Tx) error {
+		return putLogEntries(tx, b.Id(), batch)
+	})
+	return err
+}
+
+func (b *BoltLog) SnapshotId() (i uuid.UUID, e error) {
+	e = b.db.View(func(tx *bolt.Tx) error {
+		i, e = getActiveSnapshotId(tx, b.Id())
+		return e
+	})
+	return
+}
+
+func (b *BoltLog) Snapshot() (StoredSnapshot, error) {
+	id, err := b.SnapshotId()
+	if err != nil {
+		return nil, err
+	}
+
+	return openBoltSnapshot(b.db, id)
+}
+
+func (b *BoltLog) Install(s StoredSnapshot) error {
+	cur, err := b.Snapshot()
+	if err != nil {
+		return err
+	}
+
+	if cur.Id() == s.Id() {
+		return nil
+	}
+	// swap it.
+	err = b.db.Update(func(tx *bolt.Tx) error {
+		return swapActiveSnapshotId(tx, b.Id(), cur.(*BoltSnapshot).raw, s.(*BoltSnapshot).raw)
+	})
+	if err != nil {
+		return err
+	}
+
+	// finally, truncate (safe to do concurrently)
+	err = b.TrimLeft(s.LastIndex())
+	if err != nil {
+		return err
+	}
+
+	return cur.Delete()
+}
+
+type BoltSnapshot struct {
+	db  *bolt.DB
+	raw boltSnapshotSummary
+}
+
+func createEmptyBoltSnapshot(db *bolt.DB, config Config) (*BoltSnapshot, error) {
+	return createBoltSnapshot(db, -1, -1, newEventChannel([]Event{}), nil, config)
+}
+
+func installSnapshot(db *bolt.DB, snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (ret *BoltSnapshot, err error) {
+	summary := boltSnapshotSummary{snapshotId, lastIndex, lastTerm, size, config}
+	err = db.Update(func(tx *bolt.Tx) error {
+		return putSnapshotSummary(tx, summary)
+	})
+	if err != nil {
+		return
+	}
+
+	ret = &BoltSnapshot{db, summary}
+	return
+}
+
+// FIXME: Cleanup erroneous snapshot installations
+func createBoltSnapshot(db *bolt.DB, lastIndex int64, lastTerm int64, ch <-chan Event, cancel <-chan struct{}, config Config) (ret *BoltSnapshot, err error) {
+	snapshotId := uuid.NewV1()
+
+	num, err := putSnapshotChannel(db, snapshotId, ch, cancel)
+	if err != nil {
+		return
+	}
+
+	summary := boltSnapshotSummary{snapshotId, lastIndex, lastTerm, num, config}
+	err = db.Update(func(tx *bolt.Tx) error {
+		return putSnapshotSummary(tx, summary)
+	})
+	if err != nil {
+		return
+	}
+
+	ret = &BoltSnapshot{db, summary}
+	return
+}
+
+func openBoltSnapshot(db *bolt.DB, id uuid.UUID) (ret *BoltSnapshot, err error) {
+	var raw boltSnapshotSummary
+	var ok bool
+	err = db.View(func(tx *bolt.Tx) error {
+		raw, ok, err = getSnapshotSummary(tx, id)
+		return err
+	})
+	if !ok || err != nil {
+		err = errs.Or(err, errors.Wrapf(ErrInvariant, "Missing snapshot [%v]", id))
+		return
+	}
+
+	ret = &BoltSnapshot{db, raw}
+	return
+}
+
+func (b *BoltSnapshot) Id() uuid.UUID {
+	return b.raw.Id
+}
+
+func (b *BoltSnapshot) Size() int64 {
+	return b.raw.Size
+}
+
+func (b *BoltSnapshot) Config() Config {
+	return b.raw.Config
+}
+
+func (b *BoltSnapshot) LastIndex() int64 {
+	return b.raw.MaxIndex
+}
+
+func (b *BoltSnapshot) LastTerm() int64 {
+	return b.raw.MaxTerm
+}
+
+func (b *BoltSnapshot) Delete() error {
+	// FIXME: Probably need to atomically delete a snapshot.
+	err := b.db.Update(func(tx *bolt.Tx) error {
+		return deleteSnapshotSummary(tx, b.raw.Id)
+	})
+
+	return errs.Or(err, deleteSnapshotEvents(b.db, b.raw.Id))
+}
+
+func (b *BoltSnapshot) Scan(start int64, end int64) (batch []Event, err error) {
+	err = b.db.View(func(tx *bolt.Tx) (err error) {
+		batch, err = getSnapshotEvents(tx, b.raw.Id, start, end)
+		return
+	})
+	return
 }
 
 type boltSnapshotSummary struct {
@@ -142,7 +439,7 @@ func getSnapshotEvents(tx *bolt.Tx, snapshotId uuid.UUID, start, end int64) (ret
 			return nil, errors.Wrapf(err, "Unable to get snapshot event [%v] for snapshot [%v]", cur, snapshotId)
 		}
 		if !ok {
-			return nil, errors.Wrapf(ErrMissingEntry, "Missing expected entry [%v] for snapshot [%v]", cur, snapshotId)
+			return nil, errors.Wrapf(ErrNoEntry, "Missing expected entry [%v] for snapshot [%v]", cur, snapshotId)
 		}
 		ret = append(ret, e)
 	}
@@ -199,7 +496,7 @@ func setMaxIndex(tx *bolt.Tx, logId uuid.UUID, max int64) error {
 }
 
 func getMinIndex(tx *bolt.Tx, logId uuid.UUID) (int64, error) {
-	raw := tx.Bucket(logMaxBucket).Get(bin.UUID(logId))
+	raw := tx.Bucket(logMinBucket).Get(bin.UUID(logId))
 	if raw == nil {
 		return -1, nil
 	}
@@ -207,7 +504,7 @@ func getMinIndex(tx *bolt.Tx, logId uuid.UUID) (int64, error) {
 }
 
 func setMinIndex(tx *bolt.Tx, logId uuid.UUID, min int64) error {
-	return tx.Bucket(logMaxBucket).Put(bin.UUID(logId), bin.Int64(min))
+	return tx.Bucket(logMinBucket).Put(bin.UUID(logId), bin.Int64(min))
 }
 
 func getActiveSnapshotId(tx *bolt.Tx, logId uuid.UUID) (ret uuid.UUID, err error) {
@@ -377,7 +674,7 @@ func getLogEntries(tx *bolt.Tx, logId uuid.UUID, start, end int64) (ret []Entry,
 			return nil, err
 		}
 		if !ok {
-			return nil, errors.Wrapf(ErrMissingEntry, "Missing expected entry [%v] for log [%v]", cur, logId)
+			return nil, errors.Wrapf(ErrNoEntry, "Missing expected entry [%v] for log [%v]", cur, logId)
 		}
 
 		ret = append(ret, entry)
@@ -434,298 +731,4 @@ func trimLeftLogEntries(tx *bolt.Tx, logId uuid.UUID, until int64) (err error) {
 func checkBoltLog(tx *bolt.Tx, id uuid.UUID) bool {
 	raw := tx.Bucket(logBucket).Get(bin.UUID(id))
 	return raw != nil
-}
-
-func initBoltLog(tx *bolt.Tx, logId uuid.UUID, snapshotId uuid.UUID) error {
-	e1 := tx.Bucket(logBucket).Put(bin.UUID(logId), []byte{})
-	e2 := setMinIndex(tx, logId, -1)
-	e3 := setMaxIndex(tx, logId, -1)
-	e4 := setActiveSnapshotId(tx, logId, snapshotId)
-	return errs.Or(e1, e2, e3, e4)
-}
-
-// Store impl.
-type BoltStore struct {
-	db *bolt.DB
-}
-
-func NewBoltStore(db *bolt.DB) (LogStore, error) {
-	if err := initBoltBuckets(db); err != nil {
-		return nil, err
-	}
-
-	return &BoltStore{db}, nil
-}
-
-func (s *BoltStore) GetLog(id uuid.UUID) (StoredLog, error) {
-	log, err := openBoltLog(s.db, id)
-	if err != nil || log == nil {
-		return nil, err
-	}
-	return log, nil
-}
-
-func (s *BoltStore) NewLog(id uuid.UUID, config Config) (StoredLog, error) {
-	return createBoltLog(s.db, id, config)
-}
-
-func (s *BoltStore) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
-	return createBoltSnapshot(s.db, lastIndex, lastTerm, ch, cancel, config)
-}
-
-func (s *BoltStore) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret StoredSnapshot, err error) {
-	return installSnapshot(s.db, snapshotId, lastIndex, lastTerm, size, conf)
-}
-
-func (s *BoltStore) InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		return putSnapshotEvents(tx, snapshotId, offset, batch)
-	})
-}
-
-// Parent log abstraction
-type BoltLog struct {
-	db *bolt.DB
-	id uuid.UUID
-}
-
-func createBoltLog(db *bolt.DB, id uuid.UUID, config Config) (log *BoltLog, err error) {
-	s, err := createEmptyBoltSnapshot(db, config)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err != nil {
-			s.Delete()
-		}
-	}()
-
-	err = db.Update(func(tx *bolt.Tx) error {
-		if checkBoltLog(tx, id) {
-			return errors.Wrapf(ErrInvariant, "Log [%v] already exists", id)
-		}
-		return initBoltLog(tx, id, s.Id())
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &BoltLog{db, id}, nil
-}
-
-func openBoltLog(db *bolt.DB, id uuid.UUID) (log *BoltLog, err error) {
-	err = db.View(func(tx *bolt.Tx) error {
-		if checkBoltLog(tx, id) {
-			log = &BoltLog{db, id}
-		}
-		return nil
-	})
-	return
-}
-
-func (b *BoltLog) Id() uuid.UUID {
-	return b.id
-}
-
-func (b *BoltLog) Store() LogStore {
-	return &BoltStore{b.db}
-}
-
-func (b *BoltLog) Min() (m int64, e error) {
-	e = b.db.View(func(tx *bolt.Tx) error {
-		m, e = getMinIndex(tx, b.Id())
-		return e
-	})
-	return
-}
-
-func (b *BoltLog) Max() (m int64, e error) {
-	e = b.db.View(func(tx *bolt.Tx) error {
-		m, e = getMaxIndex(tx, b.Id())
-		return e
-	})
-	return
-}
-
-func (b *BoltLog) LastIndexAndTerm() (i int64, t int64, e error) {
-	e = b.db.View(func(tx *bolt.Tx) error {
-		i, t, e = getMaxIndexAndTerm(tx, b.Id())
-		return e
-	})
-	return
-}
-
-func (b *BoltLog) TrimLeft(end int64) error {
-	return b.db.Update(func(tx *bolt.Tx) (e error) {
-		return trimLeftLogEntries(tx, b.Id(), end)
-	})
-}
-
-func (b *BoltLog) Scan(beg int64, end int64) (i []Entry, e error) {
-	e = b.db.View(func(tx *bolt.Tx) error {
-		i, e = getLogEntries(tx, b.Id(), beg, end)
-		return e
-	})
-	return
-}
-
-func (b *BoltLog) Append(event []byte, term int64, kind Kind) (i Entry, e error) {
-	e = b.db.Update(func(tx *bolt.Tx) error {
-		i, e = appendLogEntry(tx, b.Id(), event, term, kind)
-		return e
-	})
-	return
-}
-
-func (b *BoltLog) Get(index int64) (i Entry, o bool, e error) {
-	e = b.db.View(func(tx *bolt.Tx) error {
-		i, o, e = getLogEntry(tx, b.Id(), index)
-		return e
-	})
-	return
-}
-
-func (b *BoltLog) Insert(batch []Entry) error {
-	return b.db.Update(func(tx *bolt.Tx) error {
-		return putLogEntries(tx, b.Id(), batch)
-	})
-}
-
-func (b *BoltLog) SnapshotId() (i uuid.UUID, e error) {
-	e = b.db.View(func(tx *bolt.Tx) error {
-		i, e = getActiveSnapshotId(tx, b.Id())
-		return e
-	})
-	return
-}
-
-func (b *BoltLog) Snapshot() (StoredSnapshot, error) {
-	id, err := b.SnapshotId()
-	if err != nil {
-		return nil, err
-	}
-
-	return openBoltSnapshot(b.db, id)
-}
-
-func (b *BoltLog) Install(s StoredSnapshot) error {
-	cur, err := b.Snapshot()
-	if err != nil {
-		return err
-	}
-
-	if cur.Id() == s.Id() {
-		return nil
-	}
-	// swap it.
-	err = b.db.Update(func(tx *bolt.Tx) error {
-		return swapActiveSnapshotId(tx, b.Id(), cur.(*BoltSnapshot).raw, s.(*BoltSnapshot).raw)
-	})
-	if err != nil {
-		return err
-	}
-
-	// finally, truncate (safe to do concurrently)
-	err = b.TrimLeft(s.LastIndex())
-	if err != nil {
-		return err
-	}
-
-	return cur.Delete()
-}
-
-type BoltSnapshot struct {
-	db  *bolt.DB
-	raw boltSnapshotSummary
-}
-
-func createEmptyBoltSnapshot(db *bolt.DB, config Config) (*BoltSnapshot, error) {
-	return createBoltSnapshot(db, -1, -1, newEventChannel([]Event{}), nil, config)
-}
-
-func installSnapshot(db *bolt.DB, snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (ret *BoltSnapshot, err error) {
-	summary := boltSnapshotSummary{snapshotId, lastIndex, lastTerm, size, config}
-	err = db.Update(func(tx *bolt.Tx) error {
-		return putSnapshotSummary(tx, summary)
-	})
-	if err != nil {
-		return
-	}
-
-	ret = &BoltSnapshot{db, summary}
-	return
-}
-
-// FIXME: Cleanup erroneous snapshot installations
-func createBoltSnapshot(db *bolt.DB, lastIndex int64, lastTerm int64, ch <-chan Event, cancel <-chan struct{}, config Config) (ret *BoltSnapshot, err error) {
-	snapshotId := uuid.NewV1()
-
-	num, err := putSnapshotChannel(db, snapshotId, ch, cancel)
-	if err != nil {
-		return
-	}
-
-	summary := boltSnapshotSummary{snapshotId, lastIndex, lastTerm, num, config}
-	err = db.Update(func(tx *bolt.Tx) error {
-		return putSnapshotSummary(tx, summary)
-	})
-	if err != nil {
-		return
-	}
-
-	ret = &BoltSnapshot{db, summary}
-	return
-}
-
-func openBoltSnapshot(db *bolt.DB, id uuid.UUID) (ret *BoltSnapshot, err error) {
-	var raw boltSnapshotSummary
-	var ok bool
-	err = db.View(func(tx *bolt.Tx) error {
-		raw, ok, err = getSnapshotSummary(tx, id)
-		return err
-	})
-	if !ok || err != nil {
-		err = errs.Or(err, errors.Wrapf(ErrInvariant, "Missing snapshot [%v]", id))
-		return
-	}
-
-	ret = &BoltSnapshot{db, raw}
-	return
-}
-
-func (b *BoltSnapshot) Id() uuid.UUID {
-	return b.raw.Id
-}
-
-func (b *BoltSnapshot) Size() int64 {
-	return b.raw.Size
-}
-
-func (b *BoltSnapshot) Config() Config {
-	return b.raw.Config
-}
-
-func (b *BoltSnapshot) LastIndex() int64 {
-	return b.raw.MaxIndex
-}
-
-func (b *BoltSnapshot) LastTerm() int64 {
-	return b.raw.MaxTerm
-}
-
-func (b *BoltSnapshot) Delete() error {
-	// FIXME: Probably need to atomically delete a snapshot.
-	err := b.db.Update(func(tx *bolt.Tx) error {
-		return deleteSnapshotSummary(tx, b.raw.Id)
-	})
-
-	return errs.Or(err, deleteSnapshotEvents(b.db, b.raw.Id))
-}
-
-func (b *BoltSnapshot) Scan(start int64, end int64) (batch []Event, err error) {
-	err = b.db.View(func(tx *bolt.Tx) (err error) {
-		batch, err = getSnapshotEvents(tx, b.raw.Id, start, end)
-		return
-	})
-	return
 }

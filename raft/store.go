@@ -13,10 +13,11 @@ import (
 
 // Storage api errors
 var (
-	ErrMissingEntry = errors.New("Raft:ErrMissingEntry")
-	ErrInvariant    = errors.New("Raft:ErrInvariant")
-	ErrOutOfBounds  = errors.New("Raft:ErrOutOfBounds")
-	ErrCompaction   = errors.New("Raft:ErrCompaction")
+	ErrNoEntry     = errors.New("Raft:ErrNoEntry")
+	ErrNoSnapshot  = errors.New("Raft:ErrNoSnapshot")
+	ErrInvariant   = errors.New("Raft:ErrInvariant")
+	ErrOutOfBounds = errors.New("Raft:ErrOutOfBounds")
+	ErrCompaction  = errors.New("Raft:ErrCompaction")
 )
 
 type LogStore interface {

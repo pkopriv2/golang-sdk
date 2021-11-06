@@ -123,13 +123,12 @@ import (
 
 // Core api errors
 var (
-	ErrClosed      = errors.New("Raft:ErrClosed")
-	ErrCanceled    = errors.New("Raft:ErrCanceled")
-	ErrTooSlow     = errors.New("Raft:ErrTooSlow")
-	ErrNotLeader   = errors.New("Raft:ErrNotLeader")
-	ErrNotFollower = errors.New("Raft:ErrNotFollower")
-	ErrNoLeader    = errors.New("Raft:ErrNoLeader")
-	ErrNotConfig   = errors.New("Raft:ErrNotConfig")
+	ErrClosed    = errors.New("Raft:ErrClosed")
+	ErrCanceled  = errors.New("Raft:ErrCanceled")
+	ErrTooSlow   = errors.New("Raft:ErrTooSlow")
+	ErrNotLeader = errors.New("Raft:ErrNotLeader")
+	ErrNoLeader  = errors.New("Raft:ErrNoLeader")
+	ErrNotConfig = errors.New("Raft:ErrNotConfig")
 )
 
 // Starts the first member of a raft cluster in the background.

@@ -82,7 +82,7 @@ func (l *leader) start() {
 			case <-l.replica.ctrl.Closed():
 				return
 			case req := <-l.replica.Appends:
-				l.handleLocalAppend(req)
+				l.handleAppend(req)
 			case req := <-l.replica.Snapshots:
 				l.handleInstallSnapshot(req)
 			case req := <-l.replica.Replications:
@@ -153,10 +153,9 @@ func (c *leader) handleReadBarrier(req *chans.Request) {
 	return
 }
 
-func (c *leader) handleLocalAppend(req *chans.Request) {
+func (c *leader) handleAppend(req *chans.Request) {
 	err := c.workPool.SubmitOrCancel(req.Canceled(), func() {
 		req.Return(c.syncer.Append(req.Canceled(), req.Body().(appendEventRequest)))
-		//c.broadcastHeartbeat() // This commits the log entry.
 	})
 	if err != nil {
 		req.Fail(errors.Wrapf(err, "Error submitting work to append pool."))
@@ -216,16 +215,16 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		return
 	}
 
-	//score, err := sync.score(req.Canceled())
-	//if err != nil {
-	//req.Fail(err)
-	//return
-	//}
+	score, err := sync.Score(req.Canceled())
+	if err != nil {
+		req.Fail(err)
+		return
+	}
 
-	//if score < 0 {
-	//req.Fail(errors.Wrapf(ErrTooSlow, "Unable to merge peer: %v", update.Peer))
-	//return
-	//}
+	if score < 0 {
+		req.Fail(errors.Wrapf(ErrTooSlow, "Unable to merge peer: %v", update.Peer))
+		return
+	}
 
 	bytes, err := Config{all}.encode(enc.Json)
 	if err != nil {
@@ -448,6 +447,7 @@ func (s *logSyncer) Append(cancel <-chan struct{}, req appendEventRequest) (entr
 
 	// wait for majority to append as well
 	for done := make(map[uuid.UUID]struct{}); len(done) < s.self.Majority()-1; {
+
 		for _, p := range s.self.Others() {
 			if _, ok := done[p.Id]; ok {
 				continue
@@ -464,7 +464,7 @@ func (s *logSyncer) Append(cancel <-chan struct{}, req appendEventRequest) (entr
 			}
 		}
 
-		timer := time.NewTimer(5 * time.Millisecond)
+		timer := time.NewTimer(1 * time.Millisecond)
 		select {
 		case <-s.ctrl.Closed():
 			timer.Stop()
@@ -600,7 +600,7 @@ func (s *peerSyncer) start() {
 				return
 			}
 
-			// loop until this peer is completely caught up to head!
+			// loop until this peer is completely caught up to next
 			for prev.Index < next {
 				if s.ctrl.IsClosed() {
 					return
@@ -640,7 +640,7 @@ func (s *peerSyncer) start() {
 	}()
 }
 
-func (s *peerSyncer) score(cancel <-chan struct{}) (int64, error) {
+func (s *peerSyncer) Score(cancel <-chan struct{}) (int64, error) {
 
 	// delta just calulcates distance from sync position to max
 	delta := func() (int64, error) {
@@ -741,7 +741,7 @@ func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry,
 		return batch[len(batch)-1], true, nil
 	}
 
-	s.logger.Error("Consistency check failed. Received hint [%v]", resp.Hint)
+	s.logger.Info("Consistency check failed. Received hint [%v]", resp.Hint)
 	prev, ok, err := s.self.Log.Get(min(resp.Hint, prev.Index-1))
 	return prev, ok, err
 }

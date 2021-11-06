@@ -72,9 +72,9 @@ func (c *ref) Update(fn func(int64) int64) int64 {
 	var cur int64
 	var ret int64
 	defer func() {
-		c.lock.Broadcast()
-		//if cur != ret {
-		//}
+		if cur != ret {
+			c.lock.Broadcast()
+		}
 	}()
 
 	c.lock.L.Lock()

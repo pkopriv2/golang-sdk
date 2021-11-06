@@ -38,7 +38,7 @@ func (c *follower) start() {
 			case <-c.ctrl.Closed():
 				return
 			case req := <-c.replica.Appends:
-				c.handleLocalAppend(req)
+				c.handleAppend(req)
 			case req := <-c.replica.RosterUpdates:
 				c.handleRosterUpdate(req)
 			case req := <-c.replica.Barrier:
@@ -81,15 +81,11 @@ func (c *follower) start() {
 	}()
 }
 
-func (c *follower) handleLocalAppend(req *chans.Request) {
+func (c *follower) handleAppend(req *chans.Request) {
 	req.Fail(ErrNotLeader)
 }
 
 func (c *follower) handleReadBarrier(req *chans.Request) {
-	req.Fail(ErrNotLeader)
-}
-
-func (c *follower) handleRemoteAppend(req *chans.Request) {
 	req.Fail(ErrNotLeader)
 }
 
@@ -103,6 +99,7 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 		req.Ack(installSnapshotResponse{Term: c.term.Num, Success: false})
 		return
 	}
+
 	c.logger.Debug("Installing snapshot segment [offset=%v,num=%v]", segment.BatchOffset, len(segment.Batch))
 
 	store := c.replica.Log.Store()

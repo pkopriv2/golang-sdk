@@ -7,9 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/boltdb/bolt"
 	"github.com/pkg/errors"
-	"github.com/pkopriv2/golang-sdk/lang/boltdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	uuid "github.com/satori/go.uuid"
 	"github.com/stretchr/testify/assert"
@@ -233,6 +231,67 @@ func TestHost_Cluster_Append(t *testing.T) {
 
 	assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(last.Index)))
 
+}
+
+func TestHost_Cluster_Append_Concurrent(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, context.Debug)
+	defer func() {
+		ctx.Logger().Info("Closing!")
+		ctx.Close()
+		ctx.Logger().Info("Closed")
+	}()
+
+	cluster, err := startTestCluster(ctx, 3)
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	timer := context.NewTimer(ctx.Control(), 60*time.Second)
+	defer timer.Close()
+
+	leader, err := electLeader(timer.Closed(), cluster)
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.NotNil(t, leader)
+
+	numItems := 10
+	numRoutines := 10
+
+	watermarks := make(chan Entry, numRoutines)
+	for i := 0; i < numRoutines; i++ {
+		go func(i int) {
+			log, err := leader.Log()
+			if err != nil {
+				t.FailNow()
+				return
+			}
+			defer log.Close()
+
+			var last Entry
+			for i := 0; i < numItems; i++ {
+				last, err = log.Append(timer.Closed(), []byte(fmt.Sprintf("%v", i)))
+				if err != nil {
+					t.FailNow()
+					return
+				}
+			}
+
+			watermarks <- last
+		}(i)
+	}
+	for i := 0; i < numRoutines; i++ {
+		select {
+		case <-timer.Closed():
+			t.FailNow()
+			return
+		case entry := <-watermarks:
+			if !assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(entry.Index))) {
+				return
+			}
+		}
+	}
+	fmt.Println("DONE!")
 }
 
 //func TestHost_Cluster_FailedFollower(t *testing.T) {
@@ -679,12 +738,12 @@ func TestHost_Cluster_Append(t *testing.T) {
 //}
 //}
 
-func startTestHost(ctx context.Context, db *bolt.DB) (Host, error) {
-	return Start(ctx, ":0", WithBoltDB(db), WithElectionTimeout(1*time.Second))
+func startTestHost(ctx context.Context) (Host, error) {
+	return Start(ctx, ":0", WithElectionTimeout(1*time.Second))
 }
 
-func joinTestHost(ctx context.Context, db *bolt.DB, peer string) (Host, error) {
-	return Join(ctx, ":0", []string{peer}, WithBoltDB(db), WithElectionTimeout(1*time.Second))
+func joinTestHost(ctx context.Context, peer string) (Host, error) {
+	return Join(ctx, ":0", []string{peer}, WithElectionTimeout(1*time.Second))
 }
 
 func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
@@ -699,16 +758,7 @@ func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 		}
 	}()
 
-	db, err := boltdb.OpenTemp()
-	if err != nil {
-		return nil, errors.Wrap(err, "Error opening bolt instance")
-	}
-	ctx.Control().Defer(func(error) {
-		boltdb.CloseAndDelete(db)
-		//db.Close() FIXME: NEED TO FIGURE OUT WHY THIS CAUSES SEGFAULT
-	})
-
-	first, err := startTestHost(ctx, db)
+	first, err := startTestHost(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "Error starting first host")
 	}
@@ -723,15 +773,7 @@ func startTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 
 	hosts := []Host{first}
 	for i := 1; i < size; i++ {
-		db, err := boltdb.OpenTemp()
-		if err != nil {
-			return nil, errors.Wrap(err, "Error opening bolt instance")
-		}
-		ctx.Control().Defer(func(error) {
-			boltdb.CloseAndDelete(db)
-		})
-
-		host, err := joinTestHost(ctx, db, first.Self().Addr)
+		host, err := joinTestHost(ctx, first.Self().Addr)
 		if err != nil {
 			return nil, errors.Wrapf(err, "Error starting [%v] host", i)
 		}
@@ -837,7 +879,9 @@ func syncTo(index int64) func(p Host) bool {
 		if err != nil {
 			return false
 		}
-		return log.Committed() >= index
+		commit := log.Committed()
+		fmt.Println("Evaluating: ", p.Self(), commit)
+		return commit >= index
 	}
 }
 
