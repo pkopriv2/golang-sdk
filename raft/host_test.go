@@ -207,6 +207,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 		if !assert.Nil(t, err) {
 			return
 		}
+
 		buf, err := log.Listen(0, 1024)
 		if !assert.Nil(t, err) {
 			return
@@ -219,7 +220,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 				log.Close()
 				return
 			case e := <-buf.Data():
-				fmt.Println(fmt.Sprintf("%-2v: Host(%v): %v", e.Index, h.Self().Id.String()[:8], string(e.Payload)))
+				fmt.Println(fmt.Sprintf("%-4v: Host(%v): %v", e.Index, h.Self().Id.String()[:8], string(e.Payload)))
 				if e.Kind == Std {
 					i++
 				}
