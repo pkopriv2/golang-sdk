@@ -25,7 +25,7 @@ type LogStore interface {
 
 	InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error
 	InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (StoredSnapshot, error)
-	NewSnapshot(lastIndex int64, lastTerm int64, data <-chan Event, conf Config) (StoredSnapshot, error)
+	NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, data <-chan Event, conf Config) (StoredSnapshot, error)
 }
 
 type StoredLog interface {

@@ -193,12 +193,13 @@ func TestHost_Cluster_Append(t *testing.T) {
 
 	var last Entry
 	for i := 0; i < numItems; i++ {
+		before := time.Now()
 		last, err = log.Append(timer.Closed(), []byte(fmt.Sprintf("%v", i)))
 		if err != nil {
 			t.FailNow()
 			return
 		}
-		fmt.Println("Wrote: ", last.Index)
+		fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v ms", string(last.Payload), time.Now().Sub(before).Milliseconds()))
 	}
 
 	for _, h := range cluster {
@@ -232,6 +233,29 @@ func TestHost_Cluster_Append(t *testing.T) {
 	assert.Nil(t, syncAll(timer.Closed(), cluster, syncTo(last.Index)))
 
 }
+
+//func TestHost_Cluster_FailedFollower(t *testing.T) {
+//ctx := context.NewContext(os.Stdout, context.Info)
+//defer ctx.Close()
+
+//cluster, err := startTestCluster(ctx, 3)
+//if !assert.Nil(t, err) {
+//return
+//}
+
+//timer := context.NewTimer(ctx.Control(), 30*time.Second)
+//defer timer.Close()
+
+//leader, err := electLeader(timer.Closed(), cluster)
+//if !assert.Nil(t, err) {
+//return
+//}
+
+//follower := first(cluster, func(h Host) bool {
+//return h.Self().Id != host.Self().Id
+//})
+//follower.Kill()
+//}
 
 //func TestHost_Cluster_Close(t *testing.T) {
 //ctx := context.NewContext(context.NewEmptyConfig())

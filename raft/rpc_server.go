@@ -114,7 +114,7 @@ func (s *rpcServer) Append(raw rpc.Request) rpc.Response {
 		return rpc.NewErrorResponse(err)
 	}
 
-	item, err := s.self.RemoteAppend(req)
+	item, err := s.self.LocalAppend(req)
 	if err != nil {
 		return rpc.NewErrorResponse(err)
 	}

@@ -38,8 +38,8 @@ type replica struct {
 	// the current cluster configuration
 	Roster *roster
 
-	// the event log.
-	Log *entryLog
+	// the core event log
+	Log *log
 
 	// the durable term store.
 	Terms *TermStore
@@ -71,11 +71,8 @@ type replica struct {
 	// snapshot install (presumably from leader)
 	Snapshots chan *chans.Request
 
-	// append requests (from clients)
-	RemoteAppends chan *chans.Request
-
 	// append requests (from local state machine)
-	LocalAppends chan *chans.Request
+	Appends chan *chans.Request
 
 	// append requests (from local state machine)
 	RosterUpdates chan *chans.Request
@@ -121,8 +118,7 @@ func newReplica(ctx context.Context, store LogStore, termStore *TermStore, addr 
 		Barrier:         make(chan *chans.Request),
 		Replications:    make(chan *chans.Request),
 		VoteRequests:    make(chan *chans.Request),
-		RemoteAppends:   make(chan *chans.Request),
-		LocalAppends:    make(chan *chans.Request),
+		Appends:         make(chan *chans.Request),
 		Snapshots:       make(chan *chans.Request),
 		RosterUpdates:   make(chan *chans.Request),
 		ElectionTimeout: opts.ElectionTimeout + rndmElectionTimeout,
@@ -285,8 +281,8 @@ func (r *replica) Listen(start int64, buf int64) (Listener, error) {
 	return r.Log.ListenCommits(start, buf)
 }
 
-func (r *replica) Compact(until int64, data <-chan Event) error {
-	return r.Log.Compact(until, data, Config{r.Cluster()})
+func (r *replica) Compact(cancel <-chan struct{}, until int64, data <-chan Event) error {
+	return r.Log.Compact(cancel, until, data, Config{r.Cluster()})
 }
 
 func (r *replica) UpdateRoster(update rosterUpdateRequest) error {
@@ -326,50 +322,45 @@ func (r *replica) RequestVote(vote voteRequest) (voteResponse, error) {
 	return val.(voteResponse), nil
 }
 
-func (r *replica) RemoteAppend(event appendEventRequest) (Entry, error) {
-	val, err := r.sendRequest(r.RemoteAppends, r.Options.ReadTimeout, event)
-	if err != nil {
-		return Entry{}, err
-	}
-	return val.(Entry), nil
-}
-
 func (r *replica) LocalAppend(event appendEventRequest) (Entry, error) {
-	val, err := r.sendRequest(r.LocalAppends, r.Options.ReadTimeout, event)
+	val, err := r.sendRequest(r.Appends, r.Options.ReadTimeout, event)
 	if err != nil {
 		return Entry{}, err
 	}
 	return val.(Entry), nil
 }
 
-func getOrCreateReplicaId(store *TermStore, addr string) (uuid.UUID, error) {
+func getOrCreateReplicaId(store *TermStore, addr string) (id uuid.UUID, err error) {
 	id, ok, err := store.GetId(addr)
 	if err != nil {
-		return uuid.UUID{}, errors.Wrapf(err, "Error retrieving id for address [%v]", addr)
+		err = errors.Wrapf(err, "Error retrieving id for address [%v]", addr)
+		return
 	}
 
 	if !ok {
 		id = uuid.NewV1()
-		if err := store.SetId(addr, id); err != nil {
-			return uuid.UUID{}, errors.Wrapf(err, "Error associating addr [%v] with id [%v]", addr, id)
+		if err = store.SetId(addr, id); err != nil {
+			err = errors.Wrapf(err, "Error associating addr [%v] with id [%v]", addr, id)
+			return
 		}
 	}
-
-	return id, nil
+	return
 }
 
-func getOrCreateLog(ctx context.Context, store LogStore, self Peer) (*entryLog, error) {
+func getOrCreateLog(ctx context.Context, store LogStore, self Peer) (ret *log, err error) {
 	raw, err := store.GetLog(self.Id)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Error opening stored log [%v]", self.Id)
+		err = errors.Wrapf(err, "Error opening stored log [%v]", self.Id)
+		return
 	}
 
 	if raw == nil {
 		raw, err = store.NewLog(self.Id, Config{[]Peer{self}})
 		if err != nil {
-			return nil, errors.Wrapf(err, "Error opening stored log [%v]", self.Id)
+			err = errors.Wrapf(err, "Error opening stored log [%v]", self.Id)
+			return
 		}
 	}
 
-	return openEntryLog(ctx, raw)
+	return openLog(ctx, raw)
 }

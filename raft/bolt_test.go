@@ -67,7 +67,7 @@ func TestBoltLog_CreateSnapshot_Events(t *testing.T) {
 
 	expected := []Event{[]byte{0, 1}, []byte{0, 1}}
 
-	s, err := createBoltSnapshot(db, 1, 1, newEventChannel(expected), Config{})
+	s, err := createBoltSnapshot(db, 1, 1, newEventChannel(expected), nil, Config{})
 	assert.Nil(t, err)
 
 	events, err := s.Scan(0, 2)
@@ -87,12 +87,12 @@ func TestBoltLog_CreateSnapshot_MultipleWithEvents(t *testing.T) {
 	expected1 := []Event{[]byte{0, 1}, []byte{2, 3}}
 	expected2 := []Event{[]byte{0, 1, 2}, []byte{3}, []byte{4, 5}}
 
-	snapshot1, err := createBoltSnapshot(db, 1, 1, newEventChannel(expected1), Config{})
+	snapshot1, err := createBoltSnapshot(db, 1, 1, newEventChannel(expected1), nil, Config{})
 	if !assert.Nil(t, err) {
 		return
 	}
 
-	snapshot2, err := createBoltSnapshot(db, 2, 2, newEventChannel(expected2), Config{})
+	snapshot2, err := createBoltSnapshot(db, 2, 2, newEventChannel(expected2), nil, Config{})
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -121,7 +121,7 @@ func TestBoltLog_DeleteSnapshot(t *testing.T) {
 
 	events := []Event{[]byte{0, 1}, []byte{2, 3}}
 
-	snapshot, err := createBoltSnapshot(db, 2, 1, newEventChannel(events), Config{})
+	snapshot, err := createBoltSnapshot(db, 2, 1, newEventChannel(events), nil, Config{})
 	if !assert.Nil(t, err) {
 		return
 	}

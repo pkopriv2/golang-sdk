@@ -37,10 +37,8 @@ func (c *follower) start() {
 			select {
 			case <-c.ctrl.Closed():
 				return
-			case req := <-c.replica.LocalAppends:
+			case req := <-c.replica.Appends:
 				c.handleLocalAppend(req)
-			case req := <-c.replica.RemoteAppends:
-				c.handleRemoteAppend(req)
 			case req := <-c.replica.RosterUpdates:
 				c.handleRosterUpdate(req)
 			case req := <-c.replica.Barrier:
@@ -72,6 +70,7 @@ func (c *follower) start() {
 				c.handleInstallSnapshotSegment(req)
 			case <-timer.C:
 				c.logger.Info("Waited too long for heartbeat: %v", c.replica.ElectionTimeout)
+				c.ctrl.Close()
 				becomeCandidate(c.replica)
 				return
 			}

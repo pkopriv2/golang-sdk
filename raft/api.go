@@ -215,6 +215,10 @@ func (c Config) encode(enc enc.Encoder) (ret []byte, err error) {
 type Host interface {
 	io.Closer
 
+	// Forcibly shuts down the host. It is still included in cluster configuration and
+	// will be included in future elections once it resumes.
+	Kill() error
+
 	// Returns the peer representing this host
 	Self() Peer
 
@@ -265,7 +269,7 @@ type Log interface {
 	// Concurrent compactions are possible, however, an invariant of the log
 	// is that it must always progress.  Therefore, an older snapshot cannot
 	// usurp a newer one.
-	Compact(until int64, snapshot <-chan Event) error
+	Compact(cancel <-chan struct{}, until int64, snapshot <-chan Event) error
 }
 
 // The synchronizer gives the consuming machine the ability to synchronize

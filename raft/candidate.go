@@ -83,14 +83,9 @@ func (c *candidate) start() {
 				c.handleRequestVote(req)
 			case <-timer.C:
 				c.logger.Info("Unable to acquire necessary votes [%v/%v]", numVotes, needed)
-				timer := time.NewTimer(c.replica.ElectionTimeout)
-				select {
-				case <-c.ctrl.Closed():
-					return
-				case <-timer.C:
-					becomeCandidate(c.replica)
-					return
-				}
+				c.ctrl.Close()
+				becomeFollower(c.replica)
+				return
 			case resp := <-ballots:
 				if resp.Err != nil {
 					c.logger.Info("Error retrieving vote from peer [%v]: %v", resp.Peer, resp.Err)
@@ -100,6 +95,7 @@ func (c *candidate) start() {
 				vote := resp.Val.(voteResponse)
 				if vote.Term > c.term.Num {
 					c.replica.SetTerm(vote.Term, nil, nil)
+					c.ctrl.Close()
 					becomeFollower(c.replica)
 					return
 				}

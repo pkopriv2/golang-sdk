@@ -89,17 +89,23 @@ func putSnapshotEvents(tx *bolt.Tx, snapshotId uuid.UUID, offset int64, batch []
 
 // Stores the snapshot event stream into the db.  This implementation breaks the work
 // into chunks to prevent blocking of concurrent reads/writes
-func putSnapshotChannel(db *bolt.DB, snapshotId uuid.UUID, ch <-chan Event) (num int64, err error) {
+func putSnapshotChannel(db *bolt.DB, snapshotId uuid.UUID, ch <-chan Event, cancel <-chan struct{}) (num int64, err error) {
 	num = 0
 	for {
 		chunk := make([]Event, 0, 1024) // TODO: could implement using reusable buffer
 		for i := 0; i < 1024; i++ {
-			e, ok := <-ch
-			if !ok {
-				break
+			select {
+			case <-cancel:
+				err = ErrCanceled
+				return
+			case e, ok := <-ch:
+				if !ok {
+					break
+				}
+
+				chunk = append(chunk, e)
 			}
 
-			chunk = append(chunk, e)
 		}
 
 		if len(chunk) == 0 {
@@ -463,8 +469,8 @@ func (s *BoltStore) NewLog(id uuid.UUID, config Config) (StoredLog, error) {
 	return createBoltLog(s.db, id, config)
 }
 
-func (s *BoltStore) NewSnapshot(lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
-	return createBoltSnapshot(s.db, lastIndex, lastTerm, ch, config)
+func (s *BoltStore) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
+	return createBoltSnapshot(s.db, lastIndex, lastTerm, ch, cancel, config)
 }
 
 func (s *BoltStore) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret StoredSnapshot, err error) {
@@ -634,7 +640,7 @@ type BoltSnapshot struct {
 }
 
 func createEmptyBoltSnapshot(db *bolt.DB, config Config) (*BoltSnapshot, error) {
-	return createBoltSnapshot(db, -1, -1, newEventChannel([]Event{}), config)
+	return createBoltSnapshot(db, -1, -1, newEventChannel([]Event{}), nil, config)
 }
 
 func installSnapshot(db *bolt.DB, snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (ret *BoltSnapshot, err error) {
@@ -651,10 +657,10 @@ func installSnapshot(db *bolt.DB, snapshotId uuid.UUID, lastIndex int64, lastTer
 }
 
 // FIXME: Cleanup erroneous snapshot installations
-func createBoltSnapshot(db *bolt.DB, lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (ret *BoltSnapshot, err error) {
+func createBoltSnapshot(db *bolt.DB, lastIndex int64, lastTerm int64, ch <-chan Event, cancel <-chan struct{}, config Config) (ret *BoltSnapshot, err error) {
 	snapshotId := uuid.NewV1()
 
-	num, err := putSnapshotChannel(db, snapshotId, ch)
+	num, err := putSnapshotChannel(db, snapshotId, ch, cancel)
 	if err != nil {
 		return
 	}

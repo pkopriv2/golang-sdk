@@ -103,6 +103,11 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 	return
 }
 
+func (h *host) Kill() error {
+	h.ctrl.Fail(nil)
+	return h.ctrl.Failure()
+}
+
 func (h *host) Close() error {
 	h.ctrl.Fail(h.leave())
 	return h.ctrl.Failure()
@@ -124,14 +129,6 @@ func (h *host) Self() Peer {
 	return h.replica.Self
 }
 
-func (h *host) Peers() []Peer {
-	return h.replica.Others()
-}
-
-func (h *host) Cluster() []Peer {
-	return h.replica.Cluster()
-}
-
 func (h *host) Roster() Peers {
 	return h.replica.Cluster()
 }
@@ -142,14 +139,6 @@ func (h *host) Sync() (Sync, error) {
 
 func (h *host) Log() (Log, error) {
 	return newLogClient(h.replica, h.leaderPool), nil
-}
-
-func (h *host) Addrs() []string {
-	addrs := make([]string, 0, 8)
-	for _, p := range h.replica.Cluster() {
-		addrs = append(addrs, p.Addr)
-	}
-	return addrs
 }
 
 func (h *host) start() error {
@@ -344,8 +333,8 @@ func (s *logClient) Committed() int64 {
 	return s.self.Log.Committed()
 }
 
-func (s *logClient) Compact(until int64, data <-chan Event) error {
-	return s.self.Compact(until, data)
+func (s *logClient) Compact(cancel <-chan struct{}, until int64, data <-chan Event) error {
+	return s.self.Compact(cancel, until, data)
 }
 
 func (s *logClient) Listen(start int64, buf int64) (Listener, error) {
@@ -356,27 +345,15 @@ func (s *logClient) Listen(start int64, buf int64) (Listener, error) {
 	return newLogClientListener(raw), nil
 }
 
-func (c *logClient) Append(cancel <-chan struct{}, e []byte) (Entry, error) {
-	return c.append(cancel, e, Std)
-}
-
-func (s *logClient) Snapshot() (int64, EventStream, error) {
-	snapshot, err := s.self.Log.Snapshot()
-	if err != nil {
-		return 0, nil, err
-	}
-	return snapshot.LastIndex(), newSnapshotStream(s.ctrl, snapshot, 1024), nil
-}
-
-func (c *logClient) append(cancel <-chan struct{}, payload []byte, kind Kind) (entry Entry, err error) {
+func (c *logClient) Append(cancel <-chan struct{}, payload []byte) (entry Entry, err error) {
 	for {
 		raw, e := c.leaderPool.TakeOrCancel(cancel)
-		if err != nil {
+		if e != nil {
 			continue
 		}
 
 		// FIXME: Implement exponential backoff
-		resp, e := raw.(*rpcClient).Append(appendEventRequest{payload, kind})
+		resp, e := raw.(*rpcClient).Append(appendEventRequest{payload, Std})
 		if e != nil {
 			c.leaderPool.Fail(raw)
 			continue
@@ -392,6 +369,14 @@ func (c *logClient) append(cancel <-chan struct{}, payload []byte, kind Kind) (e
 		c.leaderPool.Return(raw)
 		return
 	}
+}
+
+func (s *logClient) Snapshot() (int64, EventStream, error) {
+	snapshot, err := s.self.Log.Snapshot()
+	if err != nil {
+		return 0, nil, err
+	}
+	return snapshot.LastIndex(), newSnapshotStream(s.ctrl, snapshot, 1024), nil
 }
 
 // This client filters out the low-level entries and replaces
