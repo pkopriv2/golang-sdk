@@ -358,42 +358,6 @@ func badgerPutSnapshotEvents(tx *badger.Txn, snapshotId uuid.UUID, offset int64,
 	return nil
 }
 
-// Stores the snapshot event stream into the db.  This implementation breaks the work
-// into chunks to prevent blocking of concurrent reads/writes
-func badgerPutSnapshotChannel(db *badger.DB, snapshotId uuid.UUID, ch <-chan Event, cancel <-chan struct{}) (num int64, err error) {
-	num = 0
-	for {
-		chunk := make([]Event, 0, 1024) // TODO: could implement using reusable buffer
-		for i := 0; i < 1024; i++ {
-			select {
-			case <-cancel:
-				err = ErrCanceled
-				return
-			case e, ok := <-ch:
-				if !ok {
-					break
-				}
-
-				chunk = append(chunk, e)
-			}
-
-		}
-
-		if len(chunk) == 0 {
-			return
-		}
-
-		err = db.Update(func(tx *badger.Txn) (err error) {
-			return badgerPutSnapshotEvents(tx, snapshotId, num, chunk)
-		})
-		if err != nil {
-			return
-		}
-
-		num += int64(len(chunk))
-	}
-}
-
 // Scans a range of the snapshot - [start, end)
 func badgerGetSnapshotEvents(tx *badger.Txn, snapshotId uuid.UUID, start, end int64) (ret []Event, err error) {
 	if start < 0 {
