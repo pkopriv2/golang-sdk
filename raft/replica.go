@@ -42,7 +42,7 @@ type replica struct {
 	Log *log
 
 	// the durable term store.
-	Terms *TermStore
+	Terms TermStore
 
 	// data lock (currently using very coarse lock)
 	lock sync.RWMutex
@@ -51,7 +51,7 @@ type replica struct {
 	leaderPool pool.ObjectPool
 
 	// the current term.
-	term term
+	term Term
 
 	// The core options for the replica
 	Options Options
@@ -78,7 +78,7 @@ type replica struct {
 	RosterUpdates chan *chans.Request
 }
 
-func newReplica(ctx context.Context, store LogStore, termStore *TermStore, addr string, opts Options) (*replica, error) {
+func newReplica(ctx context.Context, store LogStore, termStore TermStore, addr string, opts Options) (*replica, error) {
 
 	id, err := getOrCreateReplicaId(termStore, addr)
 	if err != nil {
@@ -133,7 +133,7 @@ func (r *replica) Close() error {
 
 func (r *replica) start() error {
 	// retrieve the term from the durable store
-	term, _, err := r.Terms.GetTerm(r.Self.Id)
+	term, _, err := r.Terms.GetActiveTerm(r.Self.Id)
 	if err != nil {
 		return errors.Wrapf(err, "Unable to get latest term [%v]", r.Self.Id)
 	}
@@ -156,12 +156,12 @@ func (r *replica) String() string {
 func (r *replica) SetTerm(num int64, leader *uuid.UUID, vote *uuid.UUID) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
-	r.term = term{num, leader, vote}
+	r.term = Term{num, leader, vote}
 	r.logger.Info("Updated to term [%v]", r.term)
-	return r.Terms.Save(r.Self.Id, r.term)
+	return r.Terms.SetActiveTerm(r.Self.Id, r.term)
 }
 
-func (r *replica) CurrentTerm() term {
+func (r *replica) CurrentTerm() Term {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	return r.term
@@ -330,8 +330,8 @@ func (r *replica) LocalAppend(event appendEventRequest) (Entry, error) {
 	return val.(Entry), nil
 }
 
-func getOrCreateReplicaId(store *TermStore, addr string) (id uuid.UUID, err error) {
-	id, ok, err := store.GetId(addr)
+func getOrCreateReplicaId(store TermStore, addr string) (id uuid.UUID, err error) {
+	id, ok, err := store.GetPeerId(addr)
 	if err != nil {
 		err = errors.Wrapf(err, "Error retrieving id for address [%v]", addr)
 		return
@@ -339,7 +339,7 @@ func getOrCreateReplicaId(store *TermStore, addr string) (id uuid.UUID, err erro
 
 	if !ok {
 		id = uuid.NewV1()
-		if err = store.SetId(addr, id); err != nil {
+		if err = store.SetPeerId(addr, id); err != nil {
 			err = errors.Wrapf(err, "Error associating addr [%v] with id [%v]", addr, id)
 			return
 		}

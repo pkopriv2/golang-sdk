@@ -9,7 +9,7 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-// Bolt implementation of raft log store.
+// Badger implementation of raft log store.
 var (
 	logPrefix            = bin.String("log")
 	logEntryPrefix       = bin.String("log.entry")
@@ -25,8 +25,8 @@ type BadgerStore struct {
 	db *badger.DB
 }
 
-func NewBadgerStore(db *badger.DB) (LogStore, error) {
-	return &BadgerStore{db}, nil
+func NewBadgerLogStore(db *badger.DB) LogStore {
+	return &BadgerStore{db}
 }
 
 func (s *BadgerStore) GetLog(id uuid.UUID) (StoredLog, error) {

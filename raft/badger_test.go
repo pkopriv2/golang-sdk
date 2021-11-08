@@ -129,13 +129,9 @@ func TestBadgerStore_New_WithConfig(t *testing.T) {
 	db := badgerdb.MustOpenTemp()
 	defer badgerdb.CloseAndDelete(db)
 
-	store, err := NewBadgerStore(db)
-	if !assert.Nil(t, err) {
-		return
-	}
-
 	id := uuid.NewV1()
 
+	store := NewBadgerLogStore(db)
 	log, err := store.NewLog(id, Config{})
 	if !assert.Nil(t, err) {
 		return
@@ -158,10 +154,7 @@ func TestBadgerStore_Get_NoExist(t *testing.T) {
 	defer badgerdb.Delete(db)
 	defer badgerdb.Close(db)
 
-	store, err := NewBadgerStore(db)
-	if !assert.Nil(t, err) {
-		return
-	}
+	store := NewBadgerLogStore(db)
 
 	log, err := store.GetLog(uuid.NewV1())
 	assert.Nil(t, err)
@@ -176,10 +169,7 @@ func TestBadgerLog_Create_Empty(t *testing.T) {
 	defer badgerdb.Delete(db)
 	defer badgerdb.Close(db)
 
-	store, err := NewBadgerStore(db)
-	if !assert.Nil(t, err) {
-		return
-	}
+	store := NewBadgerLogStore(db)
 
 	log, err := store.NewLog(uuid.NewV1(), Config{})
 	if !assert.Nil(t, err) {
@@ -217,10 +207,7 @@ func TestBadgerLog_Append_Single(t *testing.T) {
 	defer badgerdb.Delete(db)
 	defer badgerdb.Close(db)
 
-	store, err := NewBadgerStore(db)
-	if !assert.Nil(t, err) {
-		return
-	}
+	store := NewBadgerLogStore(db)
 
 	log, err := store.NewLog(uuid.NewV1(), Config{})
 	if !assert.Nil(t, err) {
@@ -246,10 +233,7 @@ func TestBadgerLog_Append_Multi(t *testing.T) {
 	defer badgerdb.Delete(db)
 	defer badgerdb.Close(db)
 
-	store, err := NewBadgerStore(db)
-	if !assert.Nil(t, err) {
-		return
-	}
+	store := NewBadgerLogStore(db)
 
 	log, err := store.NewLog(uuid.NewV1(), Config{})
 	if !assert.Nil(t, err) {

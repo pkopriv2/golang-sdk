@@ -20,9 +20,16 @@ var (
 	ErrCompaction  = errors.New("Raft:ErrCompaction")
 )
 
+type TermStore interface {
+	GetPeerId(addr string) (uuid.UUID, bool, error)
+	SetPeerId(addr string, id uuid.UUID) error
+	GetActiveTerm(peerId uuid.UUID) (Term, bool, error)
+	SetActiveTerm(peerId uuid.UUID, term Term) error
+}
+
 type LogStore interface {
-	GetLog(uuid.UUID) (StoredLog, error)
-	NewLog(uuid.UUID, Config) (StoredLog, error)
+	GetLog(logId uuid.UUID) (StoredLog, error)
+	NewLog(logId uuid.UUID, config Config) (StoredLog, error)
 
 	InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error
 	InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (StoredSnapshot, error)

@@ -10,13 +10,13 @@ import (
 )
 
 // A term represents a particular member state in the Raft epochal time model.
-type term struct {
+type Term struct {
 	Num      int64      `json:"num"`       // the current term number (increases monotonically across the cluster)
 	LeaderId *uuid.UUID `json:"leader_id"` // the current leader (as seen by this member)
 	VotedFor *uuid.UUID `json:"voted_for"` // who was voted for this term (guaranteed not nil when leader != nil)
 }
 
-func (t term) String() string {
+func (t Term) String() string {
 	leaderId := "nil"
 	if t.LeaderId != nil {
 		leaderId = t.LeaderId.String()[:8]
@@ -35,15 +35,15 @@ var (
 	termIdPrefix = bin.String("term.id")
 )
 
-type TermStore struct {
+type BadgerTermStore struct {
 	db *badger.DB
 }
 
-func NewTermStore(db *badger.DB) (*TermStore, error) {
-	return &TermStore{db}, nil
+func NewBadgerTermStore(db *badger.DB) TermStore {
+	return &BadgerTermStore{db}
 }
 
-func (t *TermStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
+func (t *BadgerTermStore) GetPeerId(addr string) (id uuid.UUID, ok bool, err error) {
 	err = t.db.View(func(tx *badger.Txn) (err error) {
 		item, err := tx.Get(termIdPrefix.String(addr))
 		if err != nil {
@@ -69,13 +69,13 @@ func (t *TermStore) GetId(addr string) (id uuid.UUID, ok bool, err error) {
 	return
 }
 
-func (t *TermStore) SetId(addr string, id uuid.UUID) error {
+func (t *BadgerTermStore) SetPeerId(addr string, id uuid.UUID) error {
 	return t.db.Update(func(tx *badger.Txn) error {
 		return tx.Set(termIdPrefix.String(addr), id.Bytes())
 	})
 }
 
-func (t *TermStore) GetTerm(id uuid.UUID) (term term, ok bool, err error) {
+func (t *BadgerTermStore) GetActiveTerm(id uuid.UUID) (term Term, ok bool, err error) {
 	err = t.db.View(func(tx *badger.Txn) (err error) {
 		item, err := tx.Get(termPrefix.UUID(id))
 		if err != nil {
@@ -96,7 +96,7 @@ func (t *TermStore) GetTerm(id uuid.UUID) (term term, ok bool, err error) {
 	return
 }
 
-func (t *TermStore) Save(id uuid.UUID, term term) error {
+func (t *BadgerTermStore) SetActiveTerm(id uuid.UUID, term Term) error {
 	return t.db.Update(func(tx *badger.Txn) (err error) {
 		bytes, err := enc.Encode(enc.Json, term)
 		if err != nil {

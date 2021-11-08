@@ -3,7 +3,6 @@ package raft
 import (
 	"time"
 
-	badger "github.com/dgraph-io/badger/v3"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 )
@@ -15,7 +14,8 @@ const (
 type Option func(*Options)
 
 type Options struct {
-	BadgerDB        *badger.DB
+	LogStorage      LogStore
+	TermStorage     TermStore
 	Network         net.Network
 	DialTimeout     time.Duration
 	ReadTimeout     time.Duration
@@ -51,9 +51,15 @@ func buildOptions(fns ...Option) (ret Options) {
 	return
 }
 
-func WithBadgerDB(db *badger.DB) Option {
+func WithLogStorage(store LogStore) Option {
 	return func(o *Options) {
-		o.BadgerDB = db
+		o.LogStorage = store
+	}
+}
+
+func WithTermStorage(store TermStore) Option {
+	return func(o *Options) {
+		o.TermStorage = store
 	}
 }
 

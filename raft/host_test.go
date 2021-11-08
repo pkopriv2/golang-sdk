@@ -234,12 +234,10 @@ func TestHost_Cluster_Append(t *testing.T) {
 }
 
 func TestHost_Cluster_Append_Concurrent(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Debug)
+	ctx := context.NewContext(os.Stdout, context.Info)
 	defer func() {
-
+		ctx.Close()
 	}()
-	defer time.Sleep(500 * time.Second)
-	defer ctx.Close()
 
 	cluster, err := StartTestCluster(ctx, 3)
 	if !assert.Nil(t, err) {

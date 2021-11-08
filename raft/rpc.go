@@ -17,7 +17,7 @@ const (
 
 type statusResponse struct {
 	Self   Peer   `json:"self"`
-	Term   term   `json:"term"`
+	Term   Term   `json:"term"`
 	Config Config `json:"config"`
 }
 

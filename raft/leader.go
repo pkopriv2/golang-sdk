@@ -20,7 +20,7 @@ type leader struct {
 	ctrl     context.Control
 	syncer   *logSyncer
 	workPool pool.WorkPool
-	term     term
+	term     Term
 	replica  *replica
 }
 
@@ -339,7 +339,7 @@ type logSyncer struct {
 	self *replica
 
 	// the current term (extracted because the sync'er needs consistent view of term)
-	term term
+	term Term
 
 	// used to determine peer sync state
 	syncers map[uuid.UUID]*peerSyncer
@@ -510,7 +510,7 @@ type peerSyncer struct {
 	logger    context.Logger
 	ctrl      context.Control
 	peer      Peer
-	term      term
+	term      Term
 	self      *replica
 	prevIndex int64
 	prevTerm  int64
@@ -518,7 +518,7 @@ type peerSyncer struct {
 	pool      pool.ObjectPool // T: *rpcClient
 }
 
-func newPeerSyncer(ctx context.Context, self *replica, term term, peer Peer) *peerSyncer {
+func newPeerSyncer(ctx context.Context, self *replica, term Term, peer Peer) *peerSyncer {
 	sub := ctx.Sub("Sync(%v)", peer)
 
 	pool := peer.ClientPool(sub.Control(), self.Options)

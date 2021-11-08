@@ -35,7 +35,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		}
 	}()
 
-	if opts.BadgerDB == nil {
+	if opts.LogStorage == nil {
 		db, err := badgerdb.OpenTemp()
 		if err != nil {
 			return nil, err
@@ -44,17 +44,19 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 			badgerdb.CloseAndDelete(db)
 		})
 
-		opts = opts.Update(WithBadgerDB(db))
+		opts = opts.Update(WithLogStorage(NewBadgerLogStore(db)))
 	}
 
-	store, err := NewBadgerStore(opts.BadgerDB)
-	if err != nil {
-		return
-	}
+	if opts.TermStorage == nil {
+		db, err := badgerdb.OpenTemp()
+		if err != nil {
+			return nil, err
+		}
+		ctx.Control().Defer(func(error) {
+			badgerdb.CloseAndDelete(db)
+		})
 
-	terms, err := NewTermStore(opts.BadgerDB)
-	if err != nil {
-		return
+		opts = opts.Update(WithTermStorage(NewBadgerTermStore(db)))
 	}
 
 	listener, err := opts.Network.Listen(addr)
@@ -65,7 +67,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		listener.Close()
 	})
 
-	replica, err := newReplica(ctx, store, terms, listener.Address().String(), opts)
+	replica, err := newReplica(ctx, opts.LogStorage, opts.TermStorage, listener.Address().String(), opts)
 	if err != nil {
 		return
 	}

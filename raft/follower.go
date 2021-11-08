@@ -12,7 +12,7 @@ type follower struct {
 	ctx     context.Context
 	logger  context.Logger
 	ctrl    context.Control
-	term    term
+	term    Term
 	replica *replica
 }
 

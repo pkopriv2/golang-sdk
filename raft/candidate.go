@@ -11,7 +11,7 @@ type candidate struct {
 	ctx     context.Context
 	ctrl    context.Control
 	logger  context.Logger
-	term    term
+	term    Term
 	replica *replica
 }
 
