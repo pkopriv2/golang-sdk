@@ -17,7 +17,7 @@ type candidate struct {
 
 func becomeCandidate(replica *replica) {
 	// increment term and vote for self.
-	replica.SetTerm(replica.CurrentTerm().Num+1, nil, &replica.Self.Id)
+	replica.SetTerm(replica.CurrentTerm().Epoch+1, nil, &replica.Self.Id)
 
 	ctx := replica.Ctx.Sub("Candidate(%v)", replica.CurrentTerm())
 	ctx.Logger().Info("Becoming candidate")
@@ -42,12 +42,12 @@ func (c *candidate) start() {
 		return
 	}
 
-	c.logger.Debug("Sending ballots: (term=%v,maxIndex=%v,maxTerm=%v)", c.term.Num, maxIndex, maxTerm)
+	c.logger.Debug("Sending ballots: (term=%v,maxIndex=%v,maxTerm=%v)", c.term.Epoch, maxIndex, maxTerm)
 	ballots := c.replica.Broadcast(func(cl *rpcClient) (interface{}, error) {
 		return cl.RequestVote(
 			voteRequest{
 				Id:          c.replica.Self.Id,
-				Term:        c.term.Num,
+				Term:        c.term.Epoch,
 				MaxLogIndex: maxIndex,
 				MaxLogTerm:  maxTerm,
 			})
@@ -67,7 +67,7 @@ func (c *candidate) start() {
 			needed := c.replica.Majority()
 			if numVotes >= needed {
 				c.logger.Info("Acquired majority [%v] votes.", needed)
-				c.replica.SetTerm(c.replica.term.Num, &c.replica.Self.Id, &c.replica.Self.Id)
+				c.replica.SetTerm(c.replica.term.Epoch, &c.replica.Self.Id, &c.replica.Self.Id)
 				becomeLeader(c.replica)
 				return
 			}
@@ -93,7 +93,7 @@ func (c *candidate) start() {
 				}
 
 				vote := resp.Val.(voteResponse)
-				if vote.Term > c.term.Num {
+				if vote.Term > c.term.Epoch {
 					c.replica.SetTerm(vote.Term, nil, nil)
 					c.ctrl.Close()
 					becomeFollower(c.replica)
@@ -112,8 +112,8 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 	vote := req.Body().(voteRequest)
 
 	c.logger.Debug("Handling vote request: %v", vote)
-	if vote.Term <= c.term.Num {
-		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
+	if vote.Term <= c.term.Epoch {
+		req.Ack(voteResponse{Term: c.term.Epoch, Granted: false})
 		return
 	}
 
@@ -149,8 +149,8 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 
 func (c *candidate) handleReplication(req *chans.Request) {
 	repl := req.Body().(replicateRequest)
-	if repl.Term < c.term.Num {
-		req.Ack(replicateResponse{Term: c.term.Num, Success: false})
+	if repl.Term < c.term.Epoch {
+		req.Ack(replicateResponse{Term: c.term.Epoch, Success: false})
 		return
 	}
 

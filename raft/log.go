@@ -134,8 +134,8 @@ func (e *log) Assert(index int64, term int64) (ok bool, err error) {
 	return
 }
 
-func (e *log) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
-	return e.storage.Store().NewSnapshot(cancel, lastIndex, lastTerm, ch, config)
+func (e *log) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, data <-chan Event, config Config) (StoredSnapshot, error) {
+	return NewSnapshot(e.storage.Store(), lastIndex, lastTerm, config, data, cancel)
 }
 
 func (e *log) Install(snapshot StoredSnapshot) (err error) {

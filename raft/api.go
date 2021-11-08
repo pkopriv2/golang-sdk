@@ -221,16 +221,20 @@ type Host interface {
 	// Returns the peer representing this host
 	Self() Peer
 
+	// Returns the current term of the host
+	Term() Term
+
 	// Returns the peer objects of all members in the cluster.
 	Roster() Peers
 
 	// Returns the cluster synchronizer.
 	Sync() (Sync, error)
 
-	// Retrieves a connection to the log.
+	// Returns the cluster log
 	Log() (Log, error)
 }
 
+// A log is a highly-reliable, strongly consistent distributed log.
 type Log interface {
 	io.Closer
 

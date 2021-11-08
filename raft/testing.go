@@ -60,15 +60,15 @@ func ElectLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {
 
 	err := SyncMajority(cancel, cluster, func(h Host) bool {
 		copyTerm := h.(*host).replica.CurrentTerm()
-		if copyTerm.Num > term {
-			term = copyTerm.Num
+		if copyTerm.Epoch > term {
+			term = copyTerm.Epoch
 		}
 
-		if copyTerm.Num == term && copyTerm.LeaderId != nil {
+		if copyTerm.Epoch == term && copyTerm.LeaderId != nil {
 			leader = copyTerm.LeaderId
 		}
 
-		return leader != nil && copyTerm.LeaderId == leader && copyTerm.Num == term
+		return leader != nil && copyTerm.LeaderId == leader && copyTerm.Epoch == term
 	})
 	if err != nil {
 		return nil, errors.WithStack(err)

@@ -48,7 +48,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 	}
 
 	if opts.TermStorage == nil {
-		db, err := badgerdb.OpenTemp()
+		db, err := badgerdb.OpenTemp() // TODO: reuse db for both log and term store
 		if err != nil {
 			return nil, err
 		}
@@ -83,7 +83,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		server.Close()
 	})
 
-	pool := newLeaderPool(replica, 10)
+	pool := newLeaderPool(replica, opts.MaxConns)
 	ctx.Control().Defer(func(cause error) {
 		pool.Close()
 	})
@@ -133,6 +133,10 @@ func (h *host) Self() Peer {
 
 func (h *host) Roster() Peers {
 	return h.replica.Cluster()
+}
+
+func (h *host) Term() Term {
+	return h.replica.CurrentTerm()
 }
 
 func (h *host) Sync() (Sync, error) {

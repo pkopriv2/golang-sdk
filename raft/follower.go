@@ -94,8 +94,8 @@ func (c *follower) handleRosterUpdate(req *chans.Request) {
 
 func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 	segment := req.Body().(installSnapshotRequest)
-	if segment.Term < c.term.Num {
-		req.Ack(installSnapshotResponse{Term: c.term.Num, Success: false})
+	if segment.Term < c.term.Epoch {
+		req.Ack(installSnapshotResponse{Term: c.term.Epoch, Success: false})
 		return
 	}
 
@@ -108,7 +108,7 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 	}
 
 	if segment.BatchOffset+int64(len(segment.Batch)) < segment.Size {
-		req.Ack(installSnapshotResponse{Term: c.term.Num, Success: true})
+		req.Ack(installSnapshotResponse{Term: c.term.Epoch, Success: true})
 		return
 	}
 
@@ -120,7 +120,7 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 	}
 
 	c.logger.Info("Successfully installed snapshot [id=%v,size=%v]", snapshot.Id().String()[:8], snapshot.Size())
-	req.Ack(installSnapshotResponse{Term: c.term.Num, Success: true})
+	req.Ack(installSnapshotResponse{Term: c.term.Epoch, Success: true})
 }
 
 func (c *follower) handleRequestVote(req *chans.Request) {
@@ -129,8 +129,8 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 	c.logger.Debug("Handling request vote [%v]", vote)
 
 	// previous term vote.  (immediately decline.)
-	if vote.Term < c.term.Num {
-		req.Ack(voteResponse{Term: c.term.Num, Granted: false})
+	if vote.Term < c.term.Epoch {
+		req.Ack(voteResponse{Term: c.term.Epoch, Granted: false})
 		return
 	}
 
@@ -151,7 +151,7 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 		return
 	}
 
-	if vote.Term == c.term.Num {
+	if vote.Term == c.term.Epoch {
 		if c.term.VotedFor == nil && vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
 			c.logger.Debug("Voting for candidate [%v]", vote.Id)
 			req.Ack(voteResponse{Term: vote.Term, Granted: true})
@@ -187,8 +187,8 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 
 func (c *follower) handleReplication(req *chans.Request) {
 	repl := req.Body().(replicateRequest)
-	if repl.Term < c.term.Num {
-		req.Ack(replicateResponse{Term: c.term.Num, Success: false})
+	if repl.Term < c.term.Epoch {
+		req.Ack(replicateResponse{Term: c.term.Epoch, Success: false})
 		return
 	}
 
@@ -200,7 +200,7 @@ func (c *follower) handleReplication(req *chans.Request) {
 		return
 	}
 
-	if repl.Term > c.term.Num || c.term.LeaderId == nil {
+	if repl.Term > c.term.Epoch || c.term.LeaderId == nil {
 		c.logger.Info("New leader detected [%v]", repl.LeaderId.String()[:8])
 		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
 		c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)

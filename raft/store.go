@@ -1,8 +1,7 @@
 package raft
 
 import (
-	"errors"
-
+	"github.com/pkg/errors"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -30,10 +29,44 @@ type TermStore interface {
 type LogStore interface {
 	GetLog(logId uuid.UUID) (StoredLog, error)
 	NewLog(logId uuid.UUID, config Config) (StoredLog, error)
-
 	InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error
 	InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (StoredSnapshot, error)
-	NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, data <-chan Event, conf Config) (StoredSnapshot, error)
+}
+
+func NewSnapshot(store LogStore, lastIndex, lastTerm int64, config Config, data <-chan Event, cancel <-chan struct{}) (ret StoredSnapshot, err error) {
+	snapshotId := uuid.NewV1()
+
+	offset := int64(0)
+	for {
+		batch := make([]Event, 0, 256)
+		for i := 0; i < 256; i++ {
+			select {
+			case <-cancel:
+				err = ErrCanceled
+				return
+			case entry, ok := <-data:
+				if !ok {
+					break
+				}
+
+				batch = append(batch, entry)
+			}
+		}
+
+		if len(batch) == 0 {
+			break
+		}
+
+		if err = store.InstallSnapshotSegment(snapshotId, offset, batch); err != nil {
+			err = errors.Wrapf(err, "Unable to install snapshot segment [offset=%v,num=%v]", offset, len(batch))
+			return
+		}
+
+		offset += int64(len(batch))
+	}
+
+	ret, err = store.InstallSnapshot(snapshotId, lastIndex, lastTerm, offset, config)
+	return
 }
 
 type StoredLog interface {

@@ -139,7 +139,7 @@ func (r *replica) start() error {
 	}
 
 	// set the term from durable storage.
-	if err := r.SetTerm(term.Num, term.LeaderId, term.VotedFor); err != nil {
+	if err := r.SetTerm(term.Epoch, term.LeaderId, term.VotedFor); err != nil {
 		return errors.Wrapf(err, "Unable to set latest term [%v]", r.Self.Id)
 	}
 
