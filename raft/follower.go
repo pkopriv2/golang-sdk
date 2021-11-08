@@ -18,7 +18,6 @@ type follower struct {
 
 func becomeFollower(replica *replica) {
 	ctx := replica.Ctx.Sub("Follower(%v)", replica.CurrentTerm())
-	ctx.Logger().Info("Becoming follower")
 	l := &follower{
 		ctx:     ctx,
 		logger:  ctx.Logger(),

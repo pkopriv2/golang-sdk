@@ -1,191 +1,161 @@
 package raft
 
-// Transienting utilities for dependent projects...makes it easier to stand up local
-// clusters, etc...
+import (
+	"fmt"
+	"time"
 
-//func TestStorage(ctx common.Context) (func(*Options), error) {
-//db, err := stash.OpenTransient(ctx)
-//if err != nil {
-//return nil, errors.Wrap(err, "Error opening transient storage")
-//}
-//return func(o *Options) { o.WithStorage(db) }, nil
-//}
+	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/context"
+	uuid "github.com/satori/go.uuid"
+)
 
-//func StartTestHost(ctx common.Context) (Host, error) {
-//storage, err := TestStorage(ctx)
-//if err != nil {
-//return nil, errors.WithStack(err)
-//}
-//return Start(ctx, ":0", storage)
-//}
+func StartTestHost(ctx context.Context) (Host, error) {
+	return Start(ctx, ":0", WithElectionTimeout(1*time.Second))
+}
 
-//func JoinTestHost(ctx common.Context, peer string) (Host, error) {
-//storage, err := TestStorage(ctx)
-//if err != nil {
-//return nil, errors.WithStack(err)
-//}
-//return Join(ctx, ":0", []string{peer}, storage)
-//}
+func JoinTestHost(ctx context.Context, peer string) (Host, error) {
+	return Join(ctx, ":0", []string{peer}, WithElectionTimeout(1*time.Second))
+}
 
-//func StartTestCluster(ctx common.Context, size int) (peers []Host, err error) {
-//if size < 1 {
-//return []Host{}, nil
-//}
+func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
+	if size < 1 {
+		return []Host{}, nil
+	}
 
-//ctx = ctx.Sub("Cluster(size=%v)", size)
-//defer func() {
-//if err != nil {
-//ctx.Control().Close()
-//}
-//}()
+	ctx = ctx.Sub("Cluster(size=%v)", size)
+	defer func() {
+		if err != nil {
+			ctx.Control().Close()
+		}
+	}()
 
-//stg, err := TestStorage(ctx)
-//if err != nil {
-//return nil, err
-//}
+	first, err := StartTestHost(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "Error starting first host")
+	}
+	ctx.Control().Defer(func(error) {
+		first.Close()
+	})
 
-//// start the first
-//first, err := Start(ctx, ":0", stg)
-//if err != nil {
-//return nil, errors.Wrap(err, "Error starting first host")
-//}
-//ctx.Control().Defer(func(error) {
-//first.Close()
-//})
+	hosts := []Host{first}
+	for i := 1; i < size; i++ {
+		host, err := JoinTestHost(ctx, first.Self().Addr)
+		if err != nil {
+			return nil, errors.Wrapf(err, "Error starting [%v] host", i)
+		}
 
-//first, err = ElectLeader(ctx.Control().Closed(), []Host{first})
-//if first == nil {
-//return nil, errors.Wrap(NoLeaderError, "First member failed to become leader")
-//}
+		hosts = append(hosts, host)
+		ctx.Control().Defer(func(error) {
+			fmt.Println("Closing: ", host.Self())
+			host.Close()
+		})
+	}
 
-//hosts := []Host{first}
-//for i := 1; i < size; i++ {
-//host, err := Join(ctx, ":0", first.Addrs(), stg)
-//if err != nil {
-//return nil, errors.Wrapf(err, "Error starting [%v] host", i)
-//}
+	return hosts, nil
+}
 
-//hosts = append(hosts, host)
-//ctx.Control().Defer(func(error) {
-//host.Close()
-//})
-//}
+func ElectLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {
+	var term int64 = 0
+	var leader *uuid.UUID
 
-//return hosts, nil
-//}
+	err := SyncMajority(cancel, cluster, func(h Host) bool {
+		copyTerm := h.(*host).replica.CurrentTerm()
+		if copyTerm.Num > term {
+			term = copyTerm.Num
+		}
 
-//func ElectLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {
-//var term int = 0
-//var leader *uuid.UUID
+		if copyTerm.Num == term && copyTerm.LeaderId != nil {
+			leader = copyTerm.LeaderId
+		}
 
-//err := SyncMajority(cancel, cluster, func(h Host) bool {
-//copy := h.(*host).core.CurrentTerm()
-//if copy.Num > term {
-//term = copy.Num
-//}
+		return leader != nil && copyTerm.LeaderId == leader && copyTerm.Num == term
+	})
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
 
-//if copy.Num == term && copy.Leader != nil {
-//leader = copy.Leader
-//}
+	if leader == nil {
+		return nil, nil
+	}
 
-//return leader != nil && copy.Leader == leader && copy.Num == term
-//})
-//if err != nil {
-//return nil, errors.WithStack(err)
-//}
+	return first(cluster, func(h Host) bool {
+		return h.Self().Id == *leader
+	}), nil
+}
 
-//if leader == nil {
-//return nil, nil
-//}
+func SyncMajority(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) error {
+	done := make(map[uuid.UUID]struct{})
+	start := time.Now()
 
-//return First(cluster, func(h Host) bool {
-//return h.Id() == *leader
-//}), nil
-//}
+	majority := majority(len(cluster))
+	for len(done) < majority {
+		for _, h := range cluster {
+			if context.IsClosed(cancel) {
+				return ErrCanceled
+			}
 
-//func SyncMajority(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) error {
-//done := make(map[uuid.UUID]struct{})
-//start := time.Now()
+			if _, ok := done[h.Self().Id]; ok {
+				continue
+			}
 
-//majority := majority(len(cluster))
-//for len(done) < majority {
-//for _, h := range cluster {
-//if common.IsCanceled(cancel) {
-//return errors.WithStack(common.CanceledError)
-//}
+			if fn(h) {
+				done[h.Self().Id] = struct{}{}
+				continue
+			}
 
-//if _, ok := done[h.Id()]; ok {
-//continue
-//}
+			if time.Now().Sub(start) > 10*time.Second {
+				h.(*host).Context().Logger().Info("Still not sync'ed")
+			}
+		}
+		<-time.After(250 * time.Millisecond)
+	}
+	return nil
+}
 
-//if fn(h) {
-//done[h.Id()] = struct{}{}
-//continue
-//}
+func SyncAll(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) error {
+	done := make(map[uuid.UUID]struct{})
+	start := time.Now()
 
-//if time.Now().Sub(start) > 10*time.Second {
-//h.Context().Logger().Info("Still not sync'ed")
-//}
-//}
-//<-time.After(250 * time.Millisecond)
-//}
-//return nil
-//}
+	for len(done) < len(cluster) {
+		for _, h := range cluster {
+			if context.IsClosed(cancel) {
+				return ErrCanceled
+			}
 
-//func SyncAll(cancel <-chan struct{}, cluster []Host, fn func(h Host) bool) error {
-//done := make(map[uuid.UUID]struct{})
-//start := time.Now()
+			if _, ok := done[h.Self().Id]; ok {
+				continue
+			}
 
-//for len(done) < len(cluster) {
-//for _, h := range cluster {
-//if common.IsCanceled(cancel) {
-//return errors.WithStack(common.CanceledError)
-//}
+			if fn(h) {
+				done[h.Self().Id] = struct{}{}
+				continue
+			}
 
-//if _, ok := done[h.Id()]; ok {
-//continue
-//}
+			if time.Now().Sub(start) > 10*time.Second {
+				h.(*host).Context().Logger().Info("Still not synced")
+			}
+		}
+		<-time.After(250 * time.Millisecond)
+	}
+	return nil
+}
 
-//if fn(h) {
-//done[h.Id()] = struct{}{}
-//continue
-//}
+func SyncTo(index int64) func(p Host) bool {
+	return func(p Host) bool {
+		log, err := p.Log()
+		if err != nil {
+			return false
+		}
+		return log.Committed() >= index
+	}
+}
 
-//if time.Now().Sub(start) > 10*time.Second {
-//h.Context().Logger().Info("Still not sync'ed")
-//}
-//}
-//<-time.After(250 * time.Millisecond)
-//}
-//return nil
-//}
+func first(cluster []Host, fn func(h Host) bool) Host {
+	for _, h := range cluster {
+		if fn(h) {
+			return h
+		}
+	}
 
-//func First(cluster []Host, fn func(h Host) bool) Host {
-//for _, h := range cluster {
-//if fn(h) {
-//return h
-//}
-//}
-
-//return nil
-//}
-
-//func Index(cluster []Host, fn func(h Host) bool) int {
-//for i, h := range cluster {
-//if fn(h) {
-//return i
-//}
-//}
-
-//return -1
-//}
-
-//func Collect(cluster []Host, fn func(h Host) bool) []Host {
-//ret := make([]Host, 0, len(cluster))
-//for _, h := range cluster {
-//if fn(h) {
-//ret = append(ret, h)
-//}
-//}
-//return ret
-//}
+	return nil
+}
