@@ -33,7 +33,8 @@ type LogStore interface {
 	InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (StoredSnapshot, error)
 }
 
-func NewSnapshot(store LogStore, lastIndex, lastTerm int64, config Config, data <-chan Event, cancel <-chan struct{}) (ret StoredSnapshot, err error) {
+// Installs a new snapshot of unknown size from a channel events events
+func newSnapshot(store LogStore, lastIndex, lastTerm int64, config Config, data <-chan Event, cancel <-chan struct{}) (ret StoredSnapshot, err error) {
 	snapshotId := uuid.NewV1()
 
 	offset := int64(0)

@@ -17,17 +17,19 @@ func TestBadgerLog_CreateSnapshot_Empty(t *testing.T) {
 	db := badgerdb.MustOpenTemp()
 	defer badgerdb.CloseAndDelete(db)
 
-	s, err := badgerCreateEmptySnapshot(db, Config{Peers: []Peer{}})
+	store := NewBadgerLogStore(db)
+
+	snapshot1, err := newSnapshot(store, -1, -1, Config{}, newEventChannel([]Event{}), nil)
 	if !assert.Nil(t, err) {
 		return
 	}
 
-	snapshot, err := badgerOpenSnapshot(db, s.Id())
+	snapshot2, err := badgerOpenSnapshot(db, snapshot1.Id())
 	if !assert.Nil(t, err) {
 		return
 	}
-	assert.Equal(t, s.Id(), snapshot.Id())
-	assert.Equal(t, s.Config(), snapshot.Config())
+	assert.Equal(t, snapshot1.Id(), snapshot2.Id())
+	assert.Equal(t, snapshot1.Config(), snapshot2.Config())
 }
 
 func TestBadgerLog_CreateSnapshot_Config(t *testing.T) {
@@ -39,7 +41,9 @@ func TestBadgerLog_CreateSnapshot_Config(t *testing.T) {
 
 	expected := Config{Peers: []Peer{Peer{uuid.NewV1(), "addr"}}}
 
-	s, err := badgerCreateEmptySnapshot(db, expected)
+	store := NewBadgerLogStore(db)
+
+	s, err := newSnapshot(store, -1, -1, expected, newEventChannel([]Event{}), nil)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -61,8 +65,12 @@ func TestBadgerLog_CreateSnapshot_Events(t *testing.T) {
 
 	expected := []Event{[]byte{0, 1}, []byte{0, 1}}
 
-	s, err := badgerCreateSnapshot(db, 1, 1, newEventChannel(expected), nil, Config{})
-	assert.Nil(t, err)
+	store := NewBadgerLogStore(db)
+
+	s, err := newSnapshot(store, -1, -1, Config{}, newEventChannel(expected), nil)
+	if !assert.Nil(t, err) {
+		return
+	}
 
 	events, err := s.Scan(0, 2)
 	assert.Nil(t, err)
@@ -79,12 +87,14 @@ func TestBadgerLog_CreateSnapshot_MultipleWithEvents(t *testing.T) {
 	expected1 := []Event{[]byte{0, 1}, []byte{2, 3}}
 	expected2 := []Event{[]byte{0, 1, 2}, []byte{3}, []byte{4, 5}}
 
-	snapshot1, err := badgerCreateSnapshot(db, 1, 1, newEventChannel(expected1), nil, Config{})
+	store := NewBadgerLogStore(db)
+
+	snapshot1, err := newSnapshot(store, -1, -1, Config{}, newEventChannel(expected1), nil)
 	if !assert.Nil(t, err) {
 		return
 	}
 
-	snapshot2, err := badgerCreateSnapshot(db, 2, 2, newEventChannel(expected2), nil, Config{})
+	snapshot2, err := newSnapshot(store, 2, 2, Config{}, newEventChannel(expected2), nil)
 	if !assert.Nil(t, err) {
 		return
 	}
@@ -109,9 +119,11 @@ func TestBadgerLog_DeleteSnapshot(t *testing.T) {
 	db := badgerdb.MustOpenTemp()
 	defer badgerdb.CloseAndDelete(db)
 
+	store := NewBadgerLogStore(db)
+
 	events := []Event{[]byte{0, 1}, []byte{2, 3}}
 
-	snapshot, err := badgerCreateSnapshot(db, 2, 1, newEventChannel(events), nil, Config{})
+	snapshot, err := newSnapshot(store, 2, 2, Config{}, newEventChannel(events), nil)
 	if !assert.Nil(t, err) {
 		return
 	}

@@ -41,10 +41,6 @@ func (s *BadgerStore) NewLog(id uuid.UUID, config Config) (StoredLog, error) {
 	return badgerCreateLog(s.db, id, config)
 }
 
-func (s *BadgerStore) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, ch <-chan Event, config Config) (StoredSnapshot, error) {
-	return badgerCreateSnapshot(s.db, lastIndex, lastTerm, ch, cancel, config)
-}
-
 func (s *BadgerStore) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret StoredSnapshot, err error) {
 	return badgerInstallSnapshot(s.db, snapshotId, lastIndex, lastTerm, size, conf)
 }
@@ -221,32 +217,11 @@ type BadgerSnapshot struct {
 }
 
 func badgerCreateEmptySnapshot(db *badger.DB, config Config) (*BadgerSnapshot, error) {
-	return badgerCreateSnapshot(db, -1, -1, newEventChannel([]Event{}), nil, config)
+	return badgerInstallSnapshot(db, uuid.NewV1(), -1, -1, 0, config)
 }
 
 func badgerInstallSnapshot(db *badger.DB, snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (ret *BadgerSnapshot, err error) {
 	summary := badgerSnapshotSummary{snapshotId, lastIndex, lastTerm, size, config}
-	err = db.Update(func(tx *badger.Txn) error {
-		return badgerPutSnapshotSummary(tx, summary)
-	})
-	if err != nil {
-		return
-	}
-
-	ret = &BadgerSnapshot{db, summary}
-	return
-}
-
-// FIXME: Cleanup erroneous snapshot installations
-func badgerCreateSnapshot(db *badger.DB, lastIndex int64, lastTerm int64, ch <-chan Event, cancel <-chan struct{}, config Config) (ret *BadgerSnapshot, err error) {
-	snapshotId := uuid.NewV1()
-
-	num, err := badgerPutSnapshotChannel(db, snapshotId, ch, cancel)
-	if err != nil {
-		return
-	}
-
-	summary := badgerSnapshotSummary{snapshotId, lastIndex, lastTerm, num, config}
 	err = db.Update(func(tx *badger.Txn) error {
 		return badgerPutSnapshotSummary(tx, summary)
 	})
@@ -481,7 +456,7 @@ func badgerGetMaxIndex(tx *badger.Txn, logId uuid.UUID) (val int64, err error) {
 	item, err := tx.Get(logMaxPrefix.UUID(logId))
 	if err != nil {
 		if err == ErrKeyNotFound {
-			err = errors.Wrapf(ErrInvariant, "Missing max index for log [%v]", logId)
+			err = errors.Wrapf(ErrNoEntry, "Missing max index for log [%v]", logId)
 		}
 		return
 	}
@@ -546,7 +521,7 @@ func badgerSwapActiveSnapshotId(tx *badger.Txn, logId uuid.UUID, prev, next badg
 
 	cur, ok, err := badgerGetSnapshotSummary(tx, curId)
 	if err != nil || !ok {
-		return errs.Or(err, errors.Wrapf(ErrInvariant, "Missing snapshot [%v]", curId))
+		return errs.Or(err, errors.Wrapf(ErrNoSnapshot, "Missing snapshot [%v]", curId))
 	}
 
 	if cur.MaxIndex > next.MaxIndex && cur.MaxTerm >= next.MaxTerm {
@@ -566,7 +541,7 @@ func badgerGetMaxIndexAndTerm(tx *badger.Txn, logId uuid.UUID) (max int64, term 
 	if max > -1 {
 		entry, ok, err := badgerGetLogEntry(tx, logId, max)
 		if err != nil || !ok {
-			return -1, -1, errs.Or(err, errors.Wrapf(ErrInvariant, "Missing log entry [%v]", max))
+			return -1, -1, errs.Or(err, errors.Wrapf(ErrNoEntry, "Missing log entry [%v]", max))
 		}
 
 		return entry.Index, entry.Term, nil
@@ -580,7 +555,7 @@ func badgerGetMaxIndexAndTerm(tx *badger.Txn, logId uuid.UUID) (max int64, term 
 
 	summary, ok, err := badgerGetSnapshotSummary(tx, snapshotId)
 	if err != nil || !ok {
-		err = errs.Or(err, errors.Wrapf(ErrInvariant, "Missing snapshot [%v]", snapshotId))
+		err = errs.Or(err, errors.Wrapf(ErrNoSnapshot, "Missing snapshot [%v]", snapshotId))
 		return
 	}
 
