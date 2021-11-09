@@ -13,11 +13,11 @@ import (
 var (
 	logPrefix            = bin.String("log")
 	logEntryPrefix       = bin.String("log.entry")
-	logMinPrefix         = bin.String("log.min")          // holds the beginning index of the log. (key = /<logId>)
-	logMaxPrefix         = bin.String("log.max")          // holds the ending index of the log. (key = /<logId>)
-	logSnapshotPrefix    = bin.String("log.snapshot")     // holds the uuid of the active snapshot. (key = /<logId>)
-	snapshotsPrefix      = bin.String("snapshots")        // holds the snapshot summary (key = /<snapshotId>)
-	snapshotEventsPrefix = bin.String("snapshots.events") // holds the snapshot events (key = /<snapshotId>)
+	logMinPrefix         = bin.String("log.min")
+	logMaxPrefix         = bin.String("log.max")
+	logSnapshotPrefix    = bin.String("log.snapshot")
+	snapshotsPrefix      = bin.String("snapshots")
+	snapshotEventsPrefix = bin.String("snapshots.events")
 )
 
 // Store impl.
@@ -70,7 +70,7 @@ func badgerCreateLog(db *badger.DB, id uuid.UUID, config Config) (log *BadgerLog
 
 	err = db.Update(func(tx *badger.Txn) error {
 		if ok, _ := badgerLogExists(tx, id); ok {
-			return errors.Wrapf(ErrInvariant, "Log [%v] already exists", id)
+			return errors.Wrapf(ErrLogExists, "Log [%v] already exists", id)
 		} else {
 			return badgerInitLog(tx, id, s.Id())
 		}
@@ -439,7 +439,7 @@ func badgerGetMinIndex(tx *badger.Txn, logId uuid.UUID) (val int64, err error) {
 	item, err := tx.Get(logMinPrefix.UUID(logId))
 	if err != nil {
 		if err == ErrKeyNotFound {
-			err = errors.Wrapf(ErrInvariant, "Missing max index for log [%v]", logId)
+			err = errors.Wrapf(ErrLogCorrupt, "Missing max index for log [%v]", logId)
 		}
 		return
 	}
@@ -458,7 +458,7 @@ func badgerGetActiveSnapshotId(tx *badger.Txn, logId uuid.UUID) (ret uuid.UUID, 
 	item, err := tx.Get(logSnapshotPrefix.UUID(logId))
 	if err != nil {
 		if err == ErrKeyNotFound {
-			err = errors.Wrapf(ErrInvariant, "Missing max index for log [%v]", logId)
+			err = errors.Wrapf(ErrLogCorrupt, "Missing max index for log [%v]", logId)
 		}
 		return
 	}
@@ -480,7 +480,7 @@ func badgerSwapActiveSnapshotId(tx *badger.Txn, logId uuid.UUID, prev, next badg
 	}
 
 	if curId != prev.Id {
-		return errors.Wrapf(ErrInvariant, "Cannot swap snapshot [%v] with current [%v].  Current is no longer active.", next, prev)
+		return errors.Wrapf(ErrConflict, "Cannot swap snapshot [%v] with current [%v].  Current is no longer active.", next, prev)
 	}
 
 	cur, ok, err := badgerGetSnapshotSummary(tx, curId)
@@ -489,7 +489,7 @@ func badgerSwapActiveSnapshotId(tx *badger.Txn, logId uuid.UUID, prev, next badg
 	}
 
 	if cur.MaxIndex > next.MaxIndex && cur.MaxTerm >= next.MaxTerm {
-		return errors.Wrapf(ErrInvariant, "Cannot swap snapshot [%v] with current [%v].  It is older", next, cur)
+		return errors.Wrapf(ErrConflict, "Cannot swap snapshot [%v] with current [%v].  It is older", next, cur)
 	}
 
 	return badgerSetActiveSnapshotId(tx, logId, next.Id)
@@ -573,7 +573,7 @@ func badgerPutLogEntries(tx *badger.Txn, logId uuid.UUID, batch []Entry) error {
 	last := int64(-1)
 	for _, cur := range batch {
 		if last != -1 && cur.Index != last+1 {
-			return errors.Wrap(ErrInvariant, "Log entries must be contiguous")
+			return errors.Wrap(ErrInvalid, "Log entries must be contiguous")
 		}
 
 		if err := badgerPutLogEntry(tx, logId, cur); err != nil {

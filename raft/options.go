@@ -15,7 +15,7 @@ type Option func(*Options)
 
 type Options struct {
 	LogStorage      LogStore
-	TermStorage     TermStore
+	PeerStorage     PeerStore
 	Network         net.Network
 	DialTimeout     time.Duration
 	ReadTimeout     time.Duration
@@ -57,9 +57,9 @@ func WithLogStorage(store LogStore) Option {
 	}
 }
 
-func WithTermStorage(store TermStore) Option {
+func WithPeerStorage(store PeerStore) Option {
 	return func(o *Options) {
-		o.TermStorage = store
+		o.PeerStorage = store
 	}
 }
 

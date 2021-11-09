@@ -47,7 +47,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		opts = opts.Update(WithLogStorage(NewBadgerLogStore(db)))
 	}
 
-	if opts.TermStorage == nil {
+	if opts.PeerStorage == nil {
 		db, err := badgerdb.OpenTemp() // TODO: reuse db for both log and term store
 		if err != nil {
 			return nil, err
@@ -56,7 +56,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 			badgerdb.CloseAndDelete(db)
 		})
 
-		opts = opts.Update(WithTermStorage(NewBadgerTermStore(db)))
+		opts = opts.Update(WithPeerStorage(NewBadgerPeerStore(db)))
 	}
 
 	listener, err := opts.Network.Listen(addr)
@@ -67,7 +67,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		listener.Close()
 	})
 
-	replica, err := newReplica(ctx, opts.LogStorage, opts.TermStorage, listener.Address().String(), opts)
+	replica, err := newReplica(ctx, opts.LogStorage, opts.PeerStorage, listener.Address().String(), opts)
 	if err != nil {
 		return
 	}

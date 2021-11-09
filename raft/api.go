@@ -119,6 +119,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
+	uuid "github.com/satori/go.uuid"
 )
 
 // Core api errors
@@ -309,6 +310,97 @@ type EventStream interface {
 	io.Closer
 	Ctrl() context.Control
 	Data() <-chan Event
+}
+
+// The following APIs describe the storage layer requirements.
+// Consumers are free to swap or implement their own as necessary.
+// This library currently ships with a badgerdb (https://github.com/dgraph-io/badger)
+// implementation.
+var (
+	ErrNoEntry     = errors.New("Raft:ErrNoEntry")
+	ErrNoSnapshot  = errors.New("Raft:ErrNoSnapshot")
+	ErrLogExists   = errors.New("Raft:ErrLogExists")
+	ErrLogCorrupt  = errors.New("Raft:ErrLogCorrupt")
+	ErrConflict    = errors.New("Raft:ErrConflict")
+	ErrInvalid     = errors.New("Raft:ErrInvalid")
+	ErrOutOfBounds = errors.New("Raft:ErrOutOfBounds")
+)
+
+// Stores information regarding the state of the peer and elections.
+type PeerStore interface {
+	GetPeerId(addr string) (uuid.UUID, bool, error)
+	SetPeerId(addr string, id uuid.UUID) error
+	GetActiveTerm(peerId uuid.UUID) (Term, bool, error)
+	SetActiveTerm(peerId uuid.UUID, term Term) error
+}
+
+// Stores information about logs and snapshots.
+type LogStore interface {
+	GetLog(logId uuid.UUID) (StoredLog, error)
+	NewLog(logId uuid.UUID, config Config) (StoredLog, error)
+	InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error
+	InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (StoredSnapshot, error)
+}
+
+// A StoredLog represents a durable log.
+type StoredLog interface {
+	Id() uuid.UUID
+	Store() LogStore
+	LastIndexAndTerm() (index int64, term int64, err error)
+	Scan(beg int64, end int64) ([]Entry, error)
+	Append(data []byte, term int64, k Kind) (Entry, error)
+	Get(index int64) (Entry, bool, error)
+	Insert([]Entry) error
+	Install(StoredSnapshot) error
+	Snapshot() (StoredSnapshot, error)
+}
+
+// A StoredSnapshot represents a durable snapshot with its associated events
+type StoredSnapshot interface {
+	Id() uuid.UUID
+	LastIndex() int64
+	LastTerm() int64
+	Size() int64
+	Config() Config
+	Scan(beg int64, end int64) ([]Event, error)
+	Delete() error
+}
+
+// Installs a new snapshot of unknown size from a channel events events
+func newSnapshot(store LogStore, lastIndex, lastTerm int64, config Config, data <-chan Event, cancel <-chan struct{}) (ret StoredSnapshot, err error) {
+	snapshotId := uuid.NewV1()
+
+	offset := int64(0)
+	for {
+		batch := make([]Event, 0, 256)
+		for i := 0; i < 256; i++ {
+			select {
+			case <-cancel:
+				err = ErrCanceled
+				return
+			case entry, ok := <-data:
+				if !ok {
+					break
+				}
+
+				batch = append(batch, entry)
+			}
+		}
+
+		if len(batch) == 0 {
+			break
+		}
+
+		if err = store.InstallSnapshotSegment(snapshotId, offset, batch); err != nil {
+			err = errors.Wrapf(err, "Unable to install snapshot segment [offset=%v,num=%v]", offset, len(batch))
+			return
+		}
+
+		offset += int64(len(batch))
+	}
+
+	ret, err = store.InstallSnapshot(snapshotId, lastIndex, lastTerm, offset, config)
+	return
 }
 
 // Returns a channel that returns all the events in the batch.  The

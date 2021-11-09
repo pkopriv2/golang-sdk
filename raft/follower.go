@@ -194,14 +194,15 @@ func (c *follower) handleReplication(req *chans.Request) {
 
 	c.logger.Debug("Handling replication [prevIndex=%v, prevTerm=%v]", repl.PrevLogIndex, repl.PrevLogTerm)
 
-	hint, _, err := c.replica.Log.LastIndexAndTerm()
-	if err != nil {
-		req.Fail(err)
-		return
-	}
-
 	if repl.Term > c.term.Epoch || c.term.LeaderId == nil {
 		c.logger.Info("New leader detected [%v]", repl.LeaderId.String()[:8])
+
+		hint, _, err := c.replica.Log.LastIndexAndTerm()
+		if err != nil {
+			req.Fail(err)
+			return
+		}
+
 		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
 		c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
 		c.ctrl.Close()
@@ -209,10 +210,10 @@ func (c *follower) handleReplication(req *chans.Request) {
 		return
 	}
 
-	// if this is a heartbeat, bail out
 	c.logger.Debug("Committing [%v]", repl.Commit)
-
 	c.replica.Log.Commit(repl.Commit)
+
+	// if this is a heartbeat, bail out
 	if len(repl.Items) == 0 {
 		req.Ack(replicateResponse{Term: repl.Term, Success: true})
 		return
@@ -227,6 +228,12 @@ func (c *follower) handleReplication(req *chans.Request) {
 
 	// consistency check failed.
 	if !ok {
+		hint, _, err := c.replica.Log.LastIndexAndTerm()
+		if err != nil {
+			req.Fail(err)
+			return
+		}
+
 		c.logger.Debug("Consistency check failed. Responding with hint [%v]", hint)
 		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
 		return

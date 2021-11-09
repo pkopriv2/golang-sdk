@@ -42,7 +42,7 @@ type replica struct {
 	Log *log
 
 	// the durable term store.
-	Terms TermStore
+	Terms PeerStore
 
 	// data lock (currently using very coarse lock)
 	lock sync.RWMutex
@@ -78,7 +78,7 @@ type replica struct {
 	RosterUpdates chan *chans.Request
 }
 
-func newReplica(ctx context.Context, store LogStore, termStore TermStore, addr string, opts Options) (*replica, error) {
+func newReplica(ctx context.Context, store LogStore, termStore PeerStore, addr string, opts Options) (*replica, error) {
 
 	id, err := getOrCreateReplicaId(termStore, addr)
 	if err != nil {
@@ -265,14 +265,6 @@ func (r *replica) sendRequest(ch chan<- *chans.Request, timeout time.Duration, v
 	}
 }
 
-func (r *replica) AddPeer(peer Peer) error {
-	return r.UpdateRoster(rosterUpdateRequest{peer, true})
-}
-
-func (r *replica) DelPeer(peer Peer) error {
-	return r.UpdateRoster(rosterUpdateRequest{peer, false})
-}
-
 func (r *replica) Append(event Event, kind Kind) (Entry, error) {
 	return r.LocalAppend(appendEventRequest{event, kind})
 }
@@ -330,7 +322,7 @@ func (r *replica) LocalAppend(event appendEventRequest) (Entry, error) {
 	return val.(Entry), nil
 }
 
-func getOrCreateReplicaId(store TermStore, addr string) (id uuid.UUID, err error) {
+func getOrCreateReplicaId(store PeerStore, addr string) (id uuid.UUID, err error) {
 	id, ok, err := store.GetPeerId(addr)
 	if err != nil {
 		err = errors.Wrapf(err, "Error retrieving id for address [%v]", addr)

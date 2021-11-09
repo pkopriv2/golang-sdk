@@ -138,21 +138,10 @@ func (e *log) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int6
 	return newSnapshot(e.storage.Store(), lastIndex, lastTerm, config, data, cancel)
 }
 
-func (e *log) Install(snapshot StoredSnapshot) (err error) {
-	if err = e.storage.Install(snapshot); err != nil {
-		return
-	}
-
-	e.head.Update(func(cur int64) int64 {
-		return max(cur, snapshot.LastIndex())
-	})
-	return
-}
-
 func (e *log) Compact(cancel <-chan struct{}, until int64, data <-chan Event, config Config) (err error) {
 	item, ok, err := e.Get(until)
 	if err != nil || !ok {
-		return errors.Wrapf(ErrCompaction, "Cannot compact until [%v].  It doesn't exist", until)
+		return errors.Wrapf(ErrNoEntry, "Cannot compact until [%v].  It doesn't exist", until)
 	}
 
 	snapshot, err := e.NewSnapshot(cancel, item.Index, item.Term, data, config)

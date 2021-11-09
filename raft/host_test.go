@@ -188,7 +188,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 		return
 	}
 
-	numItems := 128
+	numItems := 1024
 
 	var last Entry
 	for i := 0; i < numItems; i++ {
@@ -198,7 +198,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 			t.FailNow()
 			return
 		}
-		fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v ms", string(last.Payload), time.Now().Sub(before).Milliseconds()))
+		fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v ms", string(last.Payload), time.Now().Sub(before)))
 	}
 
 	for _, h := range cluster {
