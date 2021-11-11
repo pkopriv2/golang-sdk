@@ -7,7 +7,6 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
-	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 )
@@ -20,14 +19,14 @@ var (
 func Serve(ctx context.Context, funcs Handlers, o ...Option) (ret Server, err error) {
 	opts := buildOptions(o)
 
-	listener, err := opts.Listener()
+	raw, err := opts.Listener()
 	if err != nil {
 		return
 	}
 
-	ctx = ctx.Sub("RpcServer(%v)", listener.Address().String())
+	ctx = ctx.Sub("RpcServer(%v)", raw.Address().String())
 	ctx.Control().Defer(func(error) {
-		listener.Close()
+		raw.Close()
 	})
 
 	pool := NewWorkPool(ctx.Control(), opts.NumWorkers)
@@ -40,26 +39,26 @@ func Serve(ctx context.Context, funcs Handlers, o ...Option) (ret Server, err er
 	})
 
 	s := &server{
-		context:  ctx,
-		ctrl:     ctx.Control(),
-		logger:   ctx.Logger(),
-		listener: listener,
-		funcs:    funcs,
-		pool:     pool,
-		opts:     opts}
+		context: ctx,
+		ctrl:    ctx.Control(),
+		logger:  ctx.Logger(),
+		socket:  NewSocket(raw, opts.Encoder),
+		funcs:   funcs,
+		pool:    pool,
+		opts:    opts}
 
 	s.start()
 	return s, nil
 }
 
 type server struct {
-	context  context.Context
-	logger   context.Logger
-	ctrl     context.Control
-	pool     WorkPool
-	funcs    Handlers
-	listener net.Listener
-	opts     Options
+	context context.Context
+	logger  context.Logger
+	ctrl    context.Control
+	pool    WorkPool
+	funcs   Handlers
+	socket  Socket
+	opts    Options
 }
 
 func (s *server) Connect() (ret Client, err error) {
@@ -69,7 +68,7 @@ func (s *server) Connect() (ret Client, err error) {
 	}
 
 	dialer := func(t time.Duration) (net.Connection, error) {
-		return s.listener.Connect(t)
+		return s.socket.(*socket).raw.Connect(t)
 	}
 
 	return Dial(dialer, func(o *Options) {
@@ -87,36 +86,35 @@ func (s *server) Close() error {
 func (s *server) start() {
 	go func() {
 		for {
-			conn, err := s.listener.Accept()
+			session, err := s.socket.Accept()
 			if err != nil {
 				s.logger.Error("Error accepting connection: %v", err)
 				return
 			}
 
-			err = s.pool.SubmitOrCancel(s.ctrl.Closed(), s.newWorker(conn))
-			if err != nil {
-				conn.Close()
+			if err = s.pool.SubmitOrCancel(s.ctrl.Closed(), s.newWorker(session)); err != nil {
+				session.Close()
 				continue
 			}
 		}
 	}()
 }
 
-func (s *server) newWorker(conn net.Connection) func() {
+func (s *server) newWorker(session Session) func() {
 	return func() {
-		defer conn.Close()
+		defer session.Close()
 
 		for {
-			req, err := recvRequest(conn, s.opts.Encoder, s.opts.ReadTimeout)
+			req, err := session.Read(s.opts.ReadTimeout)
 			if err != nil {
 				if err != io.EOF {
-					s.logger.Error("Error receiving request [%v]: %v", err, conn.RemoteAddr())
+					s.logger.Error("Error receiving request [%v]: %v", err, session.RemoteAddr())
 				}
 				return
 			}
 
-			if err = sendResponse(conn, s.handle(req), s.opts.Encoder, s.opts.SendTimeout); err != nil {
-				s.logger.Error("Error sending response [%v]: %v", err, conn.RemoteAddr())
+			if err = session.Send(s.handle(req), s.opts.SendTimeout); err != nil {
+				s.logger.Error("Error sending response [%v]: %v", err, session.RemoteAddr())
 				return
 			}
 		}
@@ -131,31 +129,5 @@ func (s *server) handle(req Request) (resp Response) {
 	}
 
 	resp = fn(req)
-	return
-}
-
-func sendResponse(conn net.Connection, resp Response, enc enc.Encoder, timeout time.Duration) (err error) {
-	var buf []byte
-	if err = enc.EncodeBinary(resp, &buf); err != nil {
-		return
-	}
-	if err = conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-		return
-	}
-	err = writePacketRaw(conn, newPacket(buf))
-	return
-}
-
-func recvRequest(conn net.Connection, dec enc.Decoder, timeout time.Duration) (req Request, err error) {
-	if err = conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return
-	}
-
-	p, err := readPacketRaw(conn)
-	if err != nil {
-		return
-	}
-
-	err = dec.DecodeBinary(p.Data, &req)
 	return
 }

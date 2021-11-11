@@ -53,9 +53,27 @@ func (s *session) RemoteAddr() string {
 }
 
 func (s *session) Read(timeout time.Duration) (ret Request, err error) {
-	return recvRequest(s.raw, s.enc, timeout)
+	if err = s.raw.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
+
+	p, err := readPacketRaw(s.raw)
+	if err != nil {
+		return
+	}
+
+	err = s.enc.DecodeBinary(p.Data, &ret)
+	return
 }
 
-func (s *session) Send(resp Response, timeout time.Duration) error {
-	return sendResponse(s.raw, resp, s.enc, timeout)
+func (s *session) Send(resp Response, timeout time.Duration) (err error) {
+	buf, err := enc.Encode(s.enc, resp)
+	if err != nil {
+		return
+	}
+	if err = s.raw.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
+	err = writePacketRaw(s.raw, newPacket(buf))
+	return
 }

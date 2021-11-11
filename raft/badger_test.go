@@ -574,3 +574,17 @@ func TestBadgerLog_Append_Multi(t *testing.T) {
 //assert.Equal(t, index, 5)
 //assert.Equal(t, term, 5)
 //}
+
+// Returns a channel that returns all the events in the batch.  The
+// channel is closed once all items have been received by the channel
+func newEventChannel(batch []Event) (ret <-chan Event) {
+	ch := make(chan Event)
+	go func() {
+		for _, cur := range batch {
+			ch <- cur
+		}
+		close(ch)
+	}()
+	ret = ch
+	return
+}

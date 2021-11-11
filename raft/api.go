@@ -555,20 +555,6 @@ func newSnapshot(store LogStorage, lastIndex, lastTerm int64, config Config, dat
 	return
 }
 
-// Returns a channel that returns all the events in the batch.  The
-// channel is closed once all items have been received by the channel
-func newEventChannel(batch []Event) (ret <-chan Event) {
-	ch := make(chan Event)
-	go func() {
-		for _, cur := range batch {
-			ch <- cur
-		}
-		close(ch)
-	}()
-	ret = ch
-	return
-}
-
 func min(l int64, others ...int64) int64 {
 	min := l
 	for _, o := range others {
