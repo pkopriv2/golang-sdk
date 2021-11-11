@@ -371,6 +371,10 @@ type DurableSnapshot interface {
 // Consumers are free to swap or implement their own as necessary.
 // This library currently ships with a simple rpc implementation.
 
+var (
+	ErrInvalidRequest = errors.New("Raft:ErrInvalidRequest")
+)
+
 // The transport is the primary interface that describes how to
 // communicate with peers.
 type Transport interface {

@@ -67,6 +67,8 @@ func (s *server) newWorker(session Session) func() {
 
 			var resp interface{}
 			switch r := req.(type) {
+			default:
+				err = ErrInvalidRequest
 			case StatusRequest:
 				resp = StatusResponse{
 					Self:   s.self.Self,
@@ -91,13 +93,13 @@ func (s *server) newWorker(session Session) func() {
 					s.logger.Error("Error sending response [%v]: %v", e, session.RemoteAddr())
 					return
 				}
-				continue
+			} else {
+				if e := session.Send(resp, s.opts.SendTimeout); e != nil {
+					s.logger.Error("Error sending response [%v]: %v", e, session.RemoteAddr())
+					return
+				}
 			}
 
-			if e := session.Send(resp, s.opts.SendTimeout); e != nil {
-				s.logger.Error("Error sending response [%v]: %v", e, session.RemoteAddr())
-				return
-			}
 		}
 	}
 }
