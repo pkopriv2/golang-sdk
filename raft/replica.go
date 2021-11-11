@@ -14,7 +14,7 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-// The replica is the state container for a member of a cluster.  The
+// The replica is the central state container for a host within a cluster.  The
 // replica is managed by a single member of the replicated log state machine
 // network.  However, the replica is also a machine itself.  Consumers can
 // interact with it and it can respond to its own state changes.
@@ -60,22 +60,22 @@ type replica struct {
 	ElectionTimeout time.Duration
 
 	// read barrier request
-	Barrier chan *chans.Request
+	BarrierRequests chan *chans.Request
 
 	// request vote events.
 	VoteRequests chan *chans.Request
 
-	// append requests (presumably from leader)
-	Replications chan *chans.Request
+	// replication requests
+	ReplicationRequests chan *chans.Request
 
 	// snapshot install (presumably from leader)
-	Snapshots chan *chans.Request
+	SnapshotRequests chan *chans.Request
 
-	// append requests (from local state machine)
-	Appends chan *chans.Request
+	// append requests (from local state machine or remote client)
+	AppendRequests chan *chans.Request
 
-	// append requests (from local state machine)
-	RosterUpdates chan *chans.Request
+	// roster update requests
+	RosterUpdateRequests chan *chans.Request
 }
 
 func newReplica(ctx context.Context, store LogStorage, termStore PeerStorage, addr string, opts Options) (*replica, error) {
@@ -108,21 +108,21 @@ func newReplica(ctx context.Context, store LogStorage, termStore PeerStorage, ad
 
 	rndmElectionTimeout := time.Duration(int64(rand.Intn(1000000000)))
 	r := &replica{
-		Ctx:             ctx,
-		logger:          ctx.Logger(),
-		ctrl:            ctx.Control(),
-		Self:            self,
-		Terms:           termStore,
-		Log:             log,
-		Roster:          roster,
-		Barrier:         make(chan *chans.Request),
-		Replications:    make(chan *chans.Request),
-		VoteRequests:    make(chan *chans.Request),
-		Appends:         make(chan *chans.Request),
-		Snapshots:       make(chan *chans.Request),
-		RosterUpdates:   make(chan *chans.Request),
-		ElectionTimeout: opts.ElectionTimeout + rndmElectionTimeout,
-		Options:         opts,
+		Ctx:                  ctx,
+		logger:               ctx.Logger(),
+		ctrl:                 ctx.Control(),
+		Self:                 self,
+		Terms:                termStore,
+		Log:                  log,
+		Roster:               roster,
+		BarrierRequests:      make(chan *chans.Request),
+		ReplicationRequests:  make(chan *chans.Request),
+		VoteRequests:         make(chan *chans.Request),
+		AppendRequests:       make(chan *chans.Request),
+		SnapshotRequests:     make(chan *chans.Request),
+		RosterUpdateRequests: make(chan *chans.Request),
+		ElectionTimeout:      opts.ElectionTimeout + rndmElectionTimeout,
+		Options:              opts,
 	}
 	return r, r.start()
 }
@@ -215,7 +215,7 @@ type broadCastResponse struct {
 	Val  interface{}
 }
 
-func (r *replica) Broadcast(fn func(c Client) (interface{}, error)) <-chan broadCastResponse {
+func (r *replica) Broadcast(fn func(c *Client) (interface{}, error)) <-chan broadCastResponse {
 	peers := r.Others()
 	ret := make(chan broadCastResponse, len(peers))
 	for _, p := range peers {
@@ -274,7 +274,7 @@ func (r *replica) Compact(cancel <-chan struct{}, until int64, data <-chan Event
 }
 
 func (r *replica) Append(req AppendEventRequest) (ret Entry, err error) {
-	val, err := r.sendRequest(r.Appends, r.Options.ReadTimeout, req)
+	val, err := r.sendRequest(r.AppendRequests, r.Options.ReadTimeout, req)
 	if err != nil {
 		return
 	}
@@ -282,12 +282,12 @@ func (r *replica) Append(req AppendEventRequest) (ret Entry, err error) {
 }
 
 func (r *replica) UpdateRoster(update RosterUpdateRequest) error {
-	_, err := r.sendRequest(r.RosterUpdates, r.Options.ReadTimeout, update)
+	_, err := r.sendRequest(r.RosterUpdateRequests, r.Options.ReadTimeout, update)
 	return err
 }
 
 func (r *replica) ReadBarrier() (ret ReadBarrierResponse, err error) {
-	val, err := r.sendRequest(r.Barrier, r.Options.ReadTimeout, nil)
+	val, err := r.sendRequest(r.BarrierRequests, r.Options.ReadTimeout, nil)
 	if err != nil {
 		return
 	}
@@ -295,7 +295,7 @@ func (r *replica) ReadBarrier() (ret ReadBarrierResponse, err error) {
 }
 
 func (r *replica) InstallSnapshot(snapshot InstallSnapshotRequest) (ret InstallSnapshotResponse, err error) {
-	val, err := r.sendRequest(r.Snapshots, r.Options.ReadTimeout, snapshot)
+	val, err := r.sendRequest(r.SnapshotRequests, r.Options.ReadTimeout, snapshot)
 	if err != nil {
 		return InstallSnapshotResponse{}, err
 	}
@@ -303,7 +303,7 @@ func (r *replica) InstallSnapshot(snapshot InstallSnapshotRequest) (ret InstallS
 }
 
 func (r *replica) Replicate(req ReplicateRequest) (ReplicateResponse, error) {
-	val, err := r.sendRequest(r.Replications, r.Options.ReadTimeout, req)
+	val, err := r.sendRequest(r.ReplicationRequests, r.Options.ReadTimeout, req)
 	if err != nil {
 		return ReplicateResponse{}, err
 	}

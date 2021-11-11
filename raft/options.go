@@ -8,6 +8,20 @@ const (
 	DefaultStoragePath = "/var/raft/raft.db"
 )
 
+// This contains all the options for setting up a raft cluster and also
+// represents the primary API for injecting alternative storage and transport
+// implementations.
+//
+// There really is only a single crucial timeout setting that consumers should
+// be concerned with - namely the ElectionTimeout.  At runtime peers maintain
+// two internal timeouts, an election timeout (as described before) and a
+// heartbeat timeout .  If a follower fails to hear a heartbeat within an election
+// timeout, it starts a new candidate term and a new leader will be elected.
+//
+// The heartbeat timeout is currently equal to 1/5 of the election timeout. This
+// multipliar may be refined over time but the expectation is that the heartbeat
+// timeout is less than the election timeout.
+
 type Option func(*Options)
 
 type Timeouts struct {

@@ -7,6 +7,11 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/context"
 )
 
+// The candidate implements the candidate state machine.  This currently only
+// implements a small subset of the request types since it is expected to
+// be relatively transient.
+//
+// The candidate reads requests from the replica instance and responds to them.
 type candidate struct {
 	ctx     context.Context
 	ctrl    context.Control
@@ -43,7 +48,7 @@ func (c *candidate) start() {
 	}
 
 	c.logger.Debug("Sending ballots: (term=%v,maxIndex=%v,maxTerm=%v)", c.term.Epoch, maxIndex, maxTerm)
-	ballots := c.replica.Broadcast(func(cl Client) (interface{}, error) {
+	ballots := c.replica.Broadcast(func(cl *Client) (interface{}, error) {
 		return cl.RequestVote(
 			VoteRequest{
 				Id:          c.replica.Self.Id,
@@ -77,7 +82,7 @@ func (c *candidate) start() {
 				return
 			case <-c.replica.ctrl.Closed():
 				return
-			case req := <-c.replica.Replications:
+			case req := <-c.replica.ReplicationRequests:
 				c.handleReplication(req)
 			case req := <-c.replica.VoteRequests:
 				c.handleRequestVote(req)

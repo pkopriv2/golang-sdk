@@ -90,12 +90,12 @@ func buildOptions(fns []Option) (ret Options) {
 	return
 }
 
-type client struct {
-	conn net.Connection
-	opts Options
+type clientSession struct {
+	raw net.Connection
+	enc enc.EncoderDecoder
 }
 
-func Dial(dialer net.Dialer, o ...Option) (ret Client, err error) {
+func Dial(dialer net.Dialer, o ...Option) (ret ClientSession, err error) {
 	opts := buildOptions(o)
 
 	conn, err := dialer(opts.DialTimeout)
@@ -103,8 +103,55 @@ func Dial(dialer net.Dialer, o ...Option) (ret Client, err error) {
 		return
 	}
 
-	ret = &client{conn: conn, opts: opts}
+	ret = &clientSession{conn, opts.Encoder}
 	return
+}
+
+func (s *clientSession) Close() error {
+	return s.raw.Close()
+}
+
+func (s *clientSession) LocalAddr() string {
+	return s.raw.LocalAddr().String()
+}
+
+func (s *clientSession) RemoteAddr() string {
+	return s.raw.RemoteAddr().String()
+}
+
+func (s *clientSession) Read(timeout time.Duration) (ret Response, err error) {
+	if err = s.raw.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
+
+	p, err := readPacketRaw(s.raw)
+	if err != nil {
+		return
+	}
+
+	err = s.enc.DecodeBinary(p.Data, &ret)
+	return
+}
+
+func (s *clientSession) Send(req Request, timeout time.Duration) (err error) {
+	buf, err := enc.Encode(s.enc, req)
+	if err != nil {
+		return
+	}
+	if err = s.raw.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
+	err = writePacketRaw(s.raw, newPacket(buf))
+	return
+}
+
+func NewClient(conn ClientSession, o ...Option) (ret Client) {
+	return &client{conn, buildOptions(o)}
+}
+
+type client struct {
+	conn ClientSession
+	opts Options
 }
 
 func (c *client) Close() error {
@@ -112,40 +159,14 @@ func (c *client) Close() error {
 }
 
 func (c *client) Send(req Request) (res Response, err error) {
-	if err = sendRequest(c.conn, req, c.opts); err != nil {
+	if err = c.conn.Send(req, c.opts.SendTimeout); err != nil {
 		c.Close()
 		return
 	}
 
-	if res, err = recvResponse(c.conn, c.opts); err != nil {
+	if res, err = c.conn.Read(c.opts.ReadTimeout); err != nil {
 		c.Close()
 		return
 	}
-	return
-}
-
-func sendRequest(conn net.Connection, req Request, opts Options) (err error) {
-	var buf []byte
-	if err = opts.Encoder.EncodeBinary(req, &buf); err != nil {
-		return
-	}
-	if err = conn.SetWriteDeadline(time.Now().Add(opts.SendTimeout)); err != nil {
-		return
-	}
-	err = writePacketRaw(conn, newPacket(buf))
-	return
-}
-
-func recvResponse(conn net.Connection, opts Options) (resp Response, err error) {
-	if err = conn.SetReadDeadline(time.Now().Add(opts.ReadTimeout)); err != nil {
-		return
-	}
-
-	p, err := readPacketRaw(conn)
-	if err != nil {
-		return
-	}
-
-	err = opts.Encoder.DecodeBinary(p.Data, &resp)
 	return
 }

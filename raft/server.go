@@ -2,11 +2,16 @@ package raft
 
 import (
 	"io"
+	"reflect"
 
+	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 )
 
+// This is the core server instance that receives reqeusts from clients over
+// the host's transport. The server typically routes requests to the replica
+// and backing state machine.
 type server struct {
 	ctx    context.Context
 	ctrl   context.Control
@@ -16,7 +21,6 @@ type server struct {
 	pool   pool.WorkPool
 }
 
-// Returns a new server instance
 func newServer(ctx context.Context, self *replica, socket Socket, opts Options) (ret *server) {
 	ctx = ctx.Sub("Server")
 	ret = &server{
@@ -53,7 +57,7 @@ func (s *server) start(socket Socket) {
 	}()
 }
 
-func (s *server) newWorker(session Session) func() {
+func (s *server) newWorker(session ServerSession) func() {
 	return func() {
 		defer session.Close()
 		for {
@@ -68,7 +72,7 @@ func (s *server) newWorker(session Session) func() {
 			var resp interface{}
 			switch r := req.(type) {
 			default:
-				err = ErrInvalidRequest
+				err = errors.Wrapf(ErrInvalid, "Invalid request type [%v]", reflect.ValueOf(req))
 			case StatusRequest:
 				resp = StatusResponse{
 					Self:   s.self.Self,
@@ -86,7 +90,7 @@ func (s *server) newWorker(session Session) func() {
 			case InstallSnapshotRequest:
 				resp, err = s.self.InstallSnapshot(r)
 			case RosterUpdateRequest:
-				err = s.self.UpdateRoster(r)
+				resp, err = RosterUpdateResponse{}, s.self.UpdateRoster(r)
 			}
 			if err != nil {
 				if e := session.Send(err, s.opts.SendTimeout); e != nil {

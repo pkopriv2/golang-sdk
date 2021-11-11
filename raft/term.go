@@ -1,34 +1,11 @@
 package raft
 
 import (
-	"fmt"
-
 	badger "github.com/dgraph-io/badger/v3"
 	"github.com/pkopriv2/golang-sdk/lang/bin"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	uuid "github.com/satori/go.uuid"
 )
-
-// A term represents a particular member state in the Raft epochal time model.
-type Term struct {
-	Epoch    int64      `json:"epoch"`     // the current term number (increases monotonically across the cluster)
-	LeaderId *uuid.UUID `json:"leader_id"` // the current leader (as seen by this member)
-	VotedFor *uuid.UUID `json:"voted_for"` // who was voted for this term (guaranteed not nil when leader != nil)
-}
-
-func (t Term) String() string {
-	leaderId := "nil"
-	if t.LeaderId != nil {
-		leaderId = t.LeaderId.String()[:8]
-	}
-
-	votedFor := "nil"
-	if t.VotedFor != nil {
-		votedFor = t.VotedFor.String()[:8]
-	}
-
-	return fmt.Sprintf("Term(%v, l=%v, v=%v", t.Epoch, leaderId, votedFor)
-}
 
 var (
 	termPrefix   = bin.String("term")

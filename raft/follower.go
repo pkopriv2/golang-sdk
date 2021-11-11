@@ -7,7 +7,12 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/context"
 )
 
-// The follower machine.  This
+// This implements the follower state machine.  Because this is steady-state
+// machine, it must implement all of the requests types.  In many instances,
+// requests can only be processed by a leader.  In situations where it
+// receives leader-only requests, it responds with ErrNotLeader
+//
+// The follower reads requests from the replica instance and responds to them.
 type follower struct {
 	ctx     context.Context
 	logger  context.Logger
@@ -36,11 +41,11 @@ func (c *follower) start() {
 			select {
 			case <-c.ctrl.Closed():
 				return
-			case req := <-c.replica.Appends:
+			case req := <-c.replica.AppendRequests:
 				c.handleAppend(req)
-			case req := <-c.replica.RosterUpdates:
+			case req := <-c.replica.RosterUpdateRequests:
 				c.handleRosterUpdate(req)
-			case req := <-c.replica.Barrier:
+			case req := <-c.replica.BarrierRequests:
 				c.handleReadBarrier(req)
 			}
 		}
@@ -61,11 +66,11 @@ func (c *follower) start() {
 				return
 			case <-c.replica.ctrl.Closed():
 				return
-			case req := <-c.replica.Replications:
+			case req := <-c.replica.ReplicationRequests:
 				c.handleReplication(req)
 			case req := <-c.replica.VoteRequests:
 				c.handleRequestVote(req)
-			case req := <-c.replica.Snapshots:
+			case req := <-c.replica.SnapshotRequests:
 				c.handleInstallSnapshotSegment(req)
 			case <-timer.C:
 				c.logger.Info("Waited too long for heartbeat: %v", c.replica.ElectionTimeout)

@@ -5,10 +5,14 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/context"
 )
 
-// NOTE: With regard to error handling, there are specific error causes that consumers
-// will be looking for.  Therefore, do NOT decorate any errors that are the result
-// of the DurableLog operation.
-
+// This implements the primary internal log abstraction.  A log is typically
+// bound to a replica instance which manages access to it.  The log provides
+// a higher-level API where consumers can register listeners to the commit
+// and append streams respectively.
+//
+// Moreover, this mediates access to the durability/storage layer.  Consumers
+// should NOT have to worry about interacting with the storage apis as they
+// are handled strictly by this internal API.
 type log struct {
 	ctx     context.Context
 	ctrl    context.Control

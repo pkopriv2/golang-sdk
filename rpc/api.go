@@ -40,15 +40,21 @@ type Server interface {
 	Connect() (Client, error)
 }
 
+// A client gives consumers access to invoke a server's handlers.
+type Client interface {
+	io.Closer
+	Send(Request) (Response, error)
+}
+
 // A socket accepts connections and instancies sessions from clients
 type Socket interface {
 	io.Closer
 	Addr() string
-	Accept() (Session, error)
+	Accept() (ServerSession, error)
 }
 
-// A session manages a server connection from a client.
-type Session interface {
+// A server session manages a server connection
+type ServerSession interface {
 	io.Closer
 	LocalAddr() string
 	RemoteAddr() string
@@ -56,10 +62,13 @@ type Session interface {
 	Send(Response, time.Duration) error
 }
 
-// A client gives consumers access to invoke a server's handlers.
-type Client interface {
+// A client session manages a client connection.
+type ClientSession interface {
 	io.Closer
-	Send(Request) (Response, error)
+	LocalAddr() string
+	RemoteAddr() string
+	Send(Request, time.Duration) error
+	Read(time.Duration) (Response, error)
 }
 
 // A simple rpc request (FUTURE: Support authentication)

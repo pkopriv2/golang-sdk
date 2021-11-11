@@ -131,6 +131,7 @@ var (
 	ErrNotLeader = errors.New("Raft:ErrNotLeader")
 	ErrNoLeader  = errors.New("Raft:ErrNoLeader")
 	ErrNotConfig = errors.New("Raft:ErrNotConfig")
+	ErrInvalid   = errors.New("Raft:ErrInvalid")
 )
 
 // Starts the first member of a raft cluster in the background.
@@ -163,53 +164,6 @@ func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host
 	}
 
 	return host, host.join(peers)
-}
-
-// Kind describes the the type of entry in the log.  Consumers
-// typically only need to worry about standard entries.
-type Kind string
-
-var (
-	Std  Kind = "Std"
-	Conf Kind = "Conf"
-	NoOp Kind = "NoOp"
-)
-
-// An event represents the payload of an entry.
-type Event []byte
-
-func (e Event) Decode(dec enc.Decoder, ptr interface{}) error {
-	return dec.DecodeBinary(e, ptr)
-}
-
-// An Entry represents an entry in the replicated log.
-type Entry struct {
-	Kind    Kind  `json:"kind"`
-	Term    int64 `json:"term"`
-	Index   int64 `json:"index"`
-	Payload Event `json:"payload"`
-}
-
-func (l Entry) String() string {
-	return fmt.Sprintf("Entry(idx=%v,term=%v,kind=%v,size=%v)", l.Index, l.Term, l.Kind, len(l.Payload))
-}
-
-func (e Entry) ParseConfig(dec enc.Decoder) (ret Config, err error) {
-	if e.Kind != Conf {
-		err = ErrNotConfig
-		return
-	}
-	err = dec.DecodeBinary(e.Payload, &ret)
-	return
-}
-
-type Config struct {
-	Peers Peers `json:"peers"`
-}
-
-func (c Config) encode(enc enc.Encoder) (ret []byte, err error) {
-	err = enc.EncodeBinary(c, &ret)
-	return
 }
 
 // A host is a member of a cluster that is actively participating in log replication.
@@ -313,17 +267,87 @@ type EventStream interface {
 	Data() <-chan Event
 }
 
+// Kind describes the the type of entry in the log.  Consumers
+// typically only need to worry about standard entries.
+type Kind string
+
+var (
+	Std  Kind = "Std"
+	Conf Kind = "Conf"
+	NoOp Kind = "NoOp"
+)
+
+// An event represents the payload of an entry.
+type Event []byte
+
+func (e Event) Decode(dec enc.Decoder, ptr interface{}) error {
+	return dec.DecodeBinary(e, ptr)
+}
+
+// An Entry represents an entry in the replicated log.
+type Entry struct {
+	Kind    Kind  `json:"kind"`
+	Term    int64 `json:"term"`
+	Index   int64 `json:"index"`
+	Payload Event `json:"payload"`
+}
+
+func (l Entry) String() string {
+	return fmt.Sprintf("Entry(idx=%v,term=%v,kind=%v,size=%v)", l.Index, l.Term, l.Kind, len(l.Payload))
+}
+
+func (e Entry) ParseConfig(dec enc.Decoder) (ret Config, err error) {
+	if e.Kind != Conf {
+		err = ErrNotConfig
+		return
+	}
+	err = dec.DecodeBinary(e.Payload, &ret)
+	return
+}
+
+type Config struct {
+	Peers Peers `json:"peers"`
+}
+
+func (c Config) encode(enc enc.Encoder) (ret []byte, err error) {
+	err = enc.EncodeBinary(c, &ret)
+	return
+}
+
+// A term represents a host state in the Raft epochal time model.
+type Term struct {
+	Epoch    int64      `json:"epoch"`     // the current term number (increases monotonically across the cluster)
+	LeaderId *uuid.UUID `json:"leader_id"` // the current leader (as seen by this member)
+	VotedFor *uuid.UUID `json:"voted_for"` // who was voted for this term (guaranteed not nil when leader != nil)
+}
+
+func (t Term) String() string {
+	leaderId := "nil"
+	if t.LeaderId != nil {
+		leaderId = t.LeaderId.String()[:8]
+	}
+
+	votedFor := "nil"
+	if t.VotedFor != nil {
+		votedFor = t.VotedFor.String()[:8]
+	}
+
+	return fmt.Sprintf("Term(%v, l=%v, v=%v", t.Epoch, leaderId, votedFor)
+}
+
+// ---------------------- STORAGE APIS -----------------------------------
 // The following APIs describe the storage layer. Consumers are free
 // to swap or implement their own as necessary. This library currently
 // ships with a badgerdb (https://github.com/dgraph-io/badger)
 // implementation.
+// -----------------------------------------------------------------------
+
 var (
 	ErrNoEntry     = errors.New("Raft:ErrNoEntry")
 	ErrNoSnapshot  = errors.New("Raft:ErrNoSnapshot")
 	ErrLogExists   = errors.New("Raft:ErrLogExists")
 	ErrLogCorrupt  = errors.New("Raft:ErrLogCorrupt")
 	ErrConflict    = errors.New("Raft:ErrConflict")
-	ErrInvalid     = errors.New("Raft:ErrInvalid")
 	ErrOutOfBounds = errors.New("Raft:ErrOutOfBounds")
 )
 
@@ -367,30 +391,35 @@ type DurableSnapshot interface {
 	Delete() error
 }
 
-// The following APIs describe the transport layer APIs.
-// Consumers are free to swap or implement their own as necessary.
-// This library currently ships with a simple rpc implementation.
+// ---------------------- TRANSPORT APIS ---------------------------------
+// The following APIs describe the transport layer APIs. Consumers are free
+// to swap or implement their own as necessary. This library currently ships
+// with a simple rpc implementation.
+// -----------------------------------------------------------------------
 
-var (
-	ErrInvalidRequest = errors.New("Raft:ErrInvalidRequest")
-)
-
-// The transport is the primary interface that describes how to
-// communicate with peers.
+// The transport is the primary interface that describes how peers communicate.
 type Transport interface {
+
+	// Returns a new socket bound to the given address.
 	Listen(addr string) (Socket, error)
-	Dial(addr string, opts Timeouts) (Client, error)
+
+	// Returns a client connected to the given addr.
+	Dial(addr string, timeout time.Duration) (ClientSession, error)
 }
 
-// Generates new server sessions.
+// Spawns new server sessions.
 type Socket interface {
 	io.Closer
+
+	// Returns the local address of the socket.
 	Addr() string
-	Accept() (Session, error)
+
+	// Returns a new server session.  Blocks until one is available.
+	Accept() (ServerSession, error)
 }
 
-// Manages the lifecycle of a single client connection.
-type Session interface {
+// Manages the lifecycle of a single server connection.
+type ServerSession interface {
 	io.Closer
 
 	// Returns the local address of the session.
@@ -427,16 +456,33 @@ type Session interface {
 	Send(interface{}, time.Duration) error
 }
 
-// The internal client api.
-type Client interface {
+// The core client interface.
+type ClientSession interface {
 	io.Closer
-	Barrier() (ReadBarrierResponse, error)
-	Status() (StatusResponse, error)
-	RequestVote(VoteRequest) (VoteResponse, error)
-	UpdateRoster(RosterUpdateRequest) error
-	Replicate(ReplicateRequest) (ReplicateResponse, error)
-	Append(AppendEventRequest) (AppendEventResponse, error)
-	InstallSnapshotSegment(InstallSnapshotRequest) (InstallSnapshotResponse, error)
+
+	// Sends a request to the destination server.  The input must be one of:
+	//
+	//  * StatusRequest
+	//  * ReadBarrierRequest
+	//  * RosterUpdateRequest
+	//  * ReplicateRequest
+	//  * VoteRequest
+	//  * AppendEventRequest
+	//  * InstallSnapshotRequest
+	//
+	Send(interface{}, time.Duration) error
+
+	// Reads a response from the server.  The input must be one of:
+	//
+	//  * *StatusResponse
+	//  * *ReadBarrierResponse
+	//  * *RosterUpdateResponse
+	//  * *ReplicateResponse
+	//  * *VoteResponse
+	//  * *AppendEventResponse
+	//  * *InstallSnapshotResponse
+	//
+	Read(interface{}, time.Duration) error
 }
 
 type StatusRequest struct{}
@@ -473,14 +519,6 @@ type ReplicateResponse struct {
 	Term    int64 `json:"term"`
 	Success bool  `json:"success"`
 	Hint    int64 `json:"hint"` // used for fast agreemnt
-}
-
-func newHeartBeat(id uuid.UUID, term int64, commit int64) ReplicateRequest {
-	return ReplicateRequest{id, term, -1, -1, []Entry{}, commit}
-}
-
-func newReplication(id uuid.UUID, term int64, prevIndex int64, prevTerm int64, items []Entry, commit int64) ReplicateRequest {
-	return ReplicateRequest{id, term, prevIndex, prevTerm, items, commit}
 }
 
 type VoteRequest struct {
@@ -522,7 +560,15 @@ type InstallSnapshotResponse struct {
 	Success bool  `json:"success"`
 }
 
-// Installs a new snapshot of unknown size from a channel events events
+func newHeartBeat(id uuid.UUID, term int64, commit int64) ReplicateRequest {
+	return ReplicateRequest{id, term, -1, -1, []Entry{}, commit}
+}
+
+func newReplication(id uuid.UUID, term int64, prevIndex int64, prevTerm int64, items []Entry, commit int64) ReplicateRequest {
+	return ReplicateRequest{id, term, prevIndex, prevTerm, items, commit}
+}
+
+// Installs a new snapshot of unknown size from a channel of events
 func newSnapshot(store LogStorage, lastIndex, lastTerm int64, config Config, data <-chan Event, cancel <-chan struct{}) (ret DurableSnapshot, err error) {
 	snapshotId := uuid.NewV1()
 

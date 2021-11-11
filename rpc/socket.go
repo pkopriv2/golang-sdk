@@ -25,34 +25,34 @@ func (s *socket) Addr() string {
 	return s.raw.Address().String()
 }
 
-func (s *socket) Accept() (ret Session, err error) {
+func (s *socket) Accept() (ret ServerSession, err error) {
 	conn, err := s.raw.Accept()
 	if err != nil {
 		return
 	}
 
-	ret = &session{conn, s.enc}
+	ret = &serverSession{conn, s.enc}
 	return
 }
 
-type session struct {
+type serverSession struct {
 	raw net.Connection
 	enc enc.EncoderDecoder
 }
 
-func (s *session) Close() error {
+func (s *serverSession) Close() error {
 	return s.raw.Close()
 }
 
-func (s *session) LocalAddr() string {
+func (s *serverSession) LocalAddr() string {
 	return s.raw.LocalAddr().String()
 }
 
-func (s *session) RemoteAddr() string {
+func (s *serverSession) RemoteAddr() string {
 	return s.raw.RemoteAddr().String()
 }
 
-func (s *session) Read(timeout time.Duration) (ret Request, err error) {
+func (s *serverSession) Read(timeout time.Duration) (ret Request, err error) {
 	if err = s.raw.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 		return
 	}
@@ -66,7 +66,7 @@ func (s *session) Read(timeout time.Duration) (ret Request, err error) {
 	return
 }
 
-func (s *session) Send(resp Response, timeout time.Duration) (err error) {
+func (s *serverSession) Send(resp Response, timeout time.Duration) (err error) {
 	buf, err := enc.Encode(s.enc, resp)
 	if err != nil {
 		return

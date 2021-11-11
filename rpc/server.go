@@ -71,12 +71,17 @@ func (s *server) Connect() (ret Client, err error) {
 		return s.socket.(*socket).raw.Connect(t)
 	}
 
-	return Dial(dialer, func(o *Options) {
-		o.ReadTimeout = s.opts.ReadTimeout
-		o.DialTimeout = s.opts.DialTimeout
-		o.SendTimeout = s.opts.SendTimeout
-		o.Encoder = s.opts.Encoder
-	})
+	conn, err := Dial(dialer,
+		WithDialTimeout(s.opts.DialTimeout),
+		WithEncoder(s.opts.Encoder))
+	if err != nil {
+		return
+	}
+
+	ret = NewClient(conn,
+		WithSendTimeout(s.opts.SendTimeout),
+		WithReadTimeout(s.opts.ReadTimeout))
+	return
 }
 
 func (s *server) Close() error {
@@ -100,7 +105,7 @@ func (s *server) start() {
 	}()
 }
 
-func (s *server) newWorker(session Session) func() {
+func (s *server) newWorker(session ServerSession) func() {
 	return func() {
 		defer session.Close()
 

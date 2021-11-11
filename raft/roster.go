@@ -7,6 +7,7 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 )
 
+// A roster implements thread-safe access to the live cluster roster.
 type roster struct {
 	raw []Peer
 	ver *ref

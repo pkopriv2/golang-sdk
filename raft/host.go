@@ -160,7 +160,7 @@ func (h *host) tryJoin(addrs []string) error {
 	errs := []error{}
 	for i := 0; i < 5; i++ {
 		for j := 0; j < len(addrs); j++ {
-			cl, err := h.replica.Options.Transport.Dial(addrs[j], h.replica.Options.Timeouts())
+			cl, err := Dial(h.replica.Options.Transport, addrs[j], h.replica.Options.Timeouts())
 			if err != nil {
 				h.ctx.Logger().Info("Unable to dial client [%v]: %v", addrs[j], err)
 				errs = append(errs, err)
@@ -272,7 +272,7 @@ func (h *host) tryLeave() error {
 func newLeaderPool(self *replica, size int) pool.ObjectPool {
 	return pool.NewObjectPool(self.Ctx.Control(), size,
 		func() (ret io.Closer, err error) {
-			var cl Client
+			var cl *Client
 			for cl == nil {
 				leader := self.Leader()
 				if leader == nil {
@@ -351,7 +351,7 @@ func (c *logClient) Append(cancel <-chan struct{}, payload []byte) (entry Entry,
 		}
 
 		// FIXME: Implement exponential backoff
-		resp, e := raw.(Client).Append(AppendEventRequest{payload, Std})
+		resp, e := raw.(*Client).Append(AppendEventRequest{payload, Std})
 		if e != nil {
 			c.leaderPool.Fail(raw)
 			continue

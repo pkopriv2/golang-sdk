@@ -14,6 +14,19 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
+// This implements the leader state machine and all accompanying services.
+// Because this is steady-state machine, it must implement all of the requests
+// types.  There are cases where clients are making requests that only followers
+// respond.  In those cases, these clients believe the leader is a follower.
+// If the leader is legitimite, it fails these requests, but if it isn't
+// it may become a follower.
+//
+// This also contains the implementations for the log-syncing routine.  That
+// routine manages a set of individual peer syncers, where there is a single
+// peer syncer per peer.  The log syncer is responsible for appending entries
+// to the underlying log and committing entries as majorities are discovered.
+//
+// The leader reads requests from the replica instance and processes to them.
 type leader struct {
 	ctx      context.Context
 	logger   context.Logger
@@ -62,7 +75,7 @@ func (l *leader) start() {
 			select {
 			case <-l.ctrl.Closed():
 				return
-			case req := <-l.replica.RosterUpdates:
+			case req := <-l.replica.RosterUpdateRequests:
 				l.handleRosterUpdate(req)
 			}
 		}
@@ -81,15 +94,15 @@ func (l *leader) start() {
 				return
 			case <-l.replica.ctrl.Closed():
 				return
-			case req := <-l.replica.Appends:
+			case req := <-l.replica.AppendRequests:
 				l.handleAppend(req)
-			case req := <-l.replica.Snapshots:
+			case req := <-l.replica.SnapshotRequests:
 				l.handleInstallSnapshot(req)
-			case req := <-l.replica.Replications:
+			case req := <-l.replica.ReplicationRequests:
 				l.handleReplication(req)
 			case req := <-l.replica.VoteRequests:
 				l.handleRequestVote(req)
-			case req := <-l.replica.Barrier:
+			case req := <-l.replica.BarrierRequests:
 				l.handleReadBarrier(req)
 			case <-timer.C:
 				l.broadcastHeartbeat()
@@ -556,13 +569,13 @@ func (l *peerSyncer) setPrevIndexAndTerm(index int64, term int64) {
 	l.prevTerm = term
 }
 
-func (s *peerSyncer) Send(cancel <-chan struct{}, fn func(cl Client) error) error {
+func (s *peerSyncer) Send(cancel <-chan struct{}, fn func(cl *Client) error) error {
 	raw, err := s.pool.TakeOrCancel(cancel)
 	if err != nil {
 		return err
 	}
 
-	if err := fn(raw.(Client)); err != nil {
+	if err := fn(raw.(*Client)); err != nil {
 		s.pool.Fail(raw)
 		return err
 	} else {
@@ -572,7 +585,7 @@ func (s *peerSyncer) Send(cancel <-chan struct{}, fn func(cl Client) error) erro
 }
 
 func (s *peerSyncer) Heartbeat(cancel <-chan struct{}) (resp ReplicateResponse, err error) {
-	err = s.Send(cancel, func(cl Client) error {
+	err = s.Send(cancel, func(cl *Client) error {
 		resp, err = cl.Replicate(newHeartBeat(s.self.Self.Id, s.term.Epoch, s.self.Log.Committed()))
 		return err
 	})
@@ -608,7 +621,7 @@ func (s *peerSyncer) start() {
 
 				// might have to reinitialize client after each batch.
 				s.logger.Debug("Position [%v/%v]", prev.Index, next)
-				err := s.Send(s.ctrl.Closed(), func(cl Client) error {
+				err := s.Send(s.ctrl.Closed(), func(cl *Client) error {
 					prev, ok, err = s.sendBatch(cl, prev, next)
 					if err != nil {
 						return errors.Wrapf(err, "Error sending batch [start=%v,end=%v]", prev.Index, next)
@@ -716,7 +729,7 @@ func (s *peerSyncer) getLatestLocalEntry() (Entry, error) {
 }
 
 // Sends a batch up to the horizon
-func (s *peerSyncer) sendBatch(cl Client, prev Entry, horizon int64) (Entry, bool, error) {
+func (s *peerSyncer) sendBatch(cl *Client, prev Entry, horizon int64) (Entry, bool, error) {
 	// scan a full batch of events.
 	batch, err := s.self.Log.Scan(prev.Index+1, min(horizon+1, prev.Index+1+256))
 	if err != nil || len(batch) == 0 {
@@ -746,7 +759,7 @@ func (s *peerSyncer) sendBatch(cl Client, prev Entry, horizon int64) (Entry, boo
 	return prev, ok, err
 }
 
-func (s *peerSyncer) sendSnapshotToClient(cl Client) (Entry, error) {
+func (s *peerSyncer) sendSnapshotToClient(cl *Client) (Entry, error) {
 	snapshot, err := s.self.Log.Snapshot()
 	if err != nil {
 		return Entry{}, err
@@ -761,9 +774,9 @@ func (s *peerSyncer) sendSnapshotToClient(cl Client) (Entry, error) {
 }
 
 // sends the snapshot to the client
-func (l *peerSyncer) sendSnapshot(cl Client, snapshot DurableSnapshot) error {
+func (l *peerSyncer) sendSnapshot(cl *Client, snapshot DurableSnapshot) error {
 	snapshotId := uuid.NewV1() // generate a random snapshot id for safe multi-tenancy in the db
-	sendSegment := func(cl Client, offset int64, batch []Event) error {
+	sendSegment := func(cl *Client, offset int64, batch []Event) error {
 		segment := InstallSnapshotRequest{
 			LeaderId:    l.self.Self.Id,
 			Term:        l.term.Epoch,

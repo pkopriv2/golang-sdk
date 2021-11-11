@@ -9,7 +9,7 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-// Badger implementation of raft log store.
+// This contains the badgerdb implementation of a raft storage backend
 var (
 	logPrefix            = bin.String("log")
 	logEntryPrefix       = bin.String("log.entry")

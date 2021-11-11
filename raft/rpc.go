@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/net"
@@ -30,17 +31,16 @@ func NewRpcTransport(net net.Network, enc enc.EncoderDecoder) Transport {
 	return &RpcTransport{net, enc}
 }
 
-func (r *RpcTransport) Dial(addr string, opts Timeouts) (ret Client, err error) {
-	raw, err := rpc.Dial(rpc.NewDialer(r.raw, addr),
-		rpc.WithReadTimeout(opts.ReadTimeout),
-		rpc.WithDialTimeout(opts.DialTimeout),
-		rpc.WithSendTimeout(opts.SendTimeout),
+func (r *RpcTransport) Dial(addr string, timeout time.Duration) (ret ClientSession, err error) {
+	raw, err := rpc.Dial(
+		rpc.NewDialer(r.raw, addr),
+		rpc.WithDialTimeout(timeout),
 		rpc.WithEncoder(r.enc))
 	if err != nil {
 		return
 	}
 
-	ret = &RpcClient{raw, r.enc}
+	ret = &RpcClientSession{raw, r.enc}
 	return
 }
 
@@ -67,34 +67,34 @@ func (r *RpcSocket) Addr() string {
 	return r.raw.Addr()
 }
 
-func (r *RpcSocket) Accept() (ret Session, err error) {
+func (r *RpcSocket) Accept() (ret ServerSession, err error) {
 	raw, err := r.raw.Accept()
 	if err != nil {
 		return
 	}
 
-	ret = &RpcSession{raw, r.enc}
+	ret = &RpcServerSession{raw, r.enc}
 	return
 }
 
-type RpcSession struct {
-	raw rpc.Session
+type RpcServerSession struct {
+	raw rpc.ServerSession
 	enc enc.EncoderDecoder
 }
 
-func (r *RpcSession) Close() error {
+func (r *RpcServerSession) Close() error {
 	return r.raw.Close()
 }
 
-func (r *RpcSession) LocalAddr() string {
+func (r *RpcServerSession) LocalAddr() string {
 	return r.raw.LocalAddr()
 }
 
-func (r *RpcSession) RemoteAddr() string {
+func (r *RpcServerSession) RemoteAddr() string {
 	return r.raw.RemoteAddr()
 }
 
-func (r *RpcSession) Read(timeout time.Duration) (ret interface{}, err error) {
+func (r *RpcServerSession) Read(timeout time.Duration) (ret interface{}, err error) {
 	req, err := r.raw.Read(timeout)
 	if err != nil {
 		return
@@ -102,6 +102,9 @@ func (r *RpcSession) Read(timeout time.Duration) (ret interface{}, err error) {
 
 	var ptr interface{}
 	switch req.Func {
+	default:
+		err = errors.Wrapf(ErrInvalid, "Invalid function handler [%v]", req.Func)
+		return
 	case funcReadBarrier:
 		ptr = &ReadBarrierRequest{}
 	case funcStatus:
@@ -125,7 +128,7 @@ func (r *RpcSession) Read(timeout time.Duration) (ret interface{}, err error) {
 	return
 }
 
-func (r *RpcSession) Send(val interface{}, timeout time.Duration) error {
+func (r *RpcServerSession) Send(val interface{}, timeout time.Duration) error {
 	if val == nil {
 		return r.raw.Send(rpc.EmptyResponse, timeout)
 	}
@@ -136,121 +139,52 @@ func (r *RpcSession) Send(val interface{}, timeout time.Duration) error {
 	}
 }
 
-type RpcClient struct {
-	raw rpc.Client
+type RpcClientSession struct {
+	raw rpc.ClientSession
 	enc enc.EncoderDecoder
 }
 
-func (c *RpcClient) Close() error {
+func (c *RpcClientSession) Close() error {
 	return c.raw.Close()
 }
 
-func (c *RpcClient) Barrier() (ret ReadBarrierResponse, err error) {
-	req, err := rpc.NewStructRequest(funcReadBarrier, c.enc, ReadBarrierRequest{})
-	if err != nil {
-		return
-	}
-
-	resp, err := c.raw.Send(req)
+func (r *RpcClientSession) Read(ptr interface{}, timeout time.Duration) (err error) {
+	resp, err := r.raw.Read(timeout)
 	if err != nil || !resp.Ok {
 		err = errs.Or(err, resp.Error())
 		return
 	}
 
-	err = resp.Decode(c.enc, &ret)
+	err = resp.Decode(r.enc, ptr)
 	return
 }
 
-func (c *RpcClient) Status() (ret StatusResponse, err error) {
-	req, err := rpc.NewStructRequest(funcStatus, c.enc, StatusRequest{})
+func (r *RpcClientSession) Send(val interface{}, timeout time.Duration) (err error) {
+	var fn string
+	switch val.(type) {
+	default:
+		err = errors.Wrapf(ErrInvalid, "Invalid request type [%v]", reflect.TypeOf(val))
+		return
+	case ReadBarrierRequest:
+		fn = funcReadBarrier
+	case StatusRequest:
+		fn = funcStatus
+	case VoteRequest:
+		fn = funcRequestVote
+	case RosterUpdateRequest:
+		fn = funcUpdateRoster
+	case ReplicateRequest:
+		fn = funcReplicate
+	case AppendEventRequest:
+		fn = funcAppend
+	case InstallSnapshotRequest:
+		fn = funcInstallSnapshot
+	}
+
+	req, err := rpc.NewStructRequest(fn, r.enc, val)
 	if err != nil {
 		return
 	}
 
-	resp, err := c.raw.Send(req)
-	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error())
-		return
-	}
-
-	err = resp.Decode(c.enc, &ret)
-	return
-}
-
-func (c *RpcClient) RequestVote(vote VoteRequest) (ret VoteResponse, err error) {
-	req, err := rpc.NewStructRequest(funcRequestVote, c.enc, vote)
-	if err != nil {
-		return
-	}
-
-	resp, err := c.raw.Send(req)
-	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error())
-		return
-	}
-
-	err = resp.Decode(c.enc, &ret)
-	return
-}
-
-func (c *RpcClient) UpdateRoster(updateRoster RosterUpdateRequest) error {
-	req, err := rpc.NewStructRequest(funcUpdateRoster, c.enc, updateRoster)
-	if err != nil {
-		return err
-	}
-
-	resp, err := c.raw.Send(req)
-	if err != nil || !resp.Ok {
-		return errs.Or(err, resp.Error())
-	}
-
-	return nil
-}
-
-func (c *RpcClient) Replicate(r ReplicateRequest) (ret ReplicateResponse, err error) {
-	req, err := rpc.NewStructRequest(funcReplicate, c.enc, r)
-	if err != nil {
-		return
-	}
-
-	resp, err := c.raw.Send(req)
-	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error())
-		return
-	}
-
-	err = resp.Decode(c.enc, &ret)
-	return
-}
-
-func (c *RpcClient) Append(r AppendEventRequest) (ret AppendEventResponse, err error) {
-	req, err := rpc.NewStructRequest(funcAppend, c.enc, r)
-	if err != nil {
-		return
-	}
-
-	resp, err := c.raw.Send(req)
-	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error())
-		return
-	}
-
-	err = resp.Decode(c.enc, &ret)
-	return
-}
-
-func (c *RpcClient) InstallSnapshotSegment(snapshot InstallSnapshotRequest) (ret InstallSnapshotResponse, err error) {
-	req, err := rpc.NewStructRequest(funcInstallSnapshot, c.enc, snapshot)
-	if err != nil {
-		return
-	}
-
-	resp, err := c.raw.Send(req)
-	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error())
-		return
-	}
-
-	err = resp.Decode(c.enc, &ret)
-	return
+	return r.raw.Send(req, timeout)
 }

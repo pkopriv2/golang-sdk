@@ -9,7 +9,7 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-// A peer contains the identifying info of a cluster member.
+// This contains the primary identifier for a peer.
 type Peer struct {
 	Id   uuid.UUID `json:"id"`
 	Addr string    `json:"addr"`
@@ -94,6 +94,6 @@ func (p Peer) ClientPool(ctrl context.Control, opts Options) pool.ObjectPool {
 	})
 }
 
-func (p Peer) Dial(opts Options) (Client, error) {
-	return opts.Transport.Dial(p.Addr, opts.Timeouts())
+func (p Peer) Dial(opts Options) (*Client, error) {
+	return Dial(opts.Transport, p.Addr, opts.Timeouts())
 }

@@ -6,8 +6,9 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/context"
 )
 
-// A simply notifying integer value.
-
+// A ref tracks the value of an integer and notifies consumers on changes to that integer.
+// This is used to track the maximum offset that has been appended to the log as well as
+// the offset of the commit index of the log.
 type ref struct {
 	val  int64
 	lock *sync.Cond
