@@ -398,7 +398,7 @@ type Session interface {
 	// Returns the next request from the session.  The returned value
 	// must be one of:
 	//
-	//	* StatusRequest
+	//  * StatusRequest
 	//  * ReadBarrierRequest
 	//  * RosterUpdateRequest
 	//  * ReplicateRequest
@@ -410,9 +410,9 @@ type Session interface {
 
 	// Sends a response to the client.  Must be one of:
 	//
-	//	* nil
-	//	* error
-	//	* StatusResponse
+	//  * nil
+	//  * error
+	//  * StatusResponse
 	//  * ReadBarrierResponse
 	//  * RosterUpdateResponse
 	//  * ReplicateResponse
