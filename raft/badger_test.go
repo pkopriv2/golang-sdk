@@ -17,7 +17,7 @@ func TestBadgerLog_CreateSnapshot_Empty(t *testing.T) {
 	db := badgerdb.MustOpenTemp()
 	defer badgerdb.CloseAndDelete(db)
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	snapshot1, err := newSnapshot(store, -1, -1, Config{}, newEventChannel([]Event{}), nil)
 	if !assert.Nil(t, err) {
@@ -41,7 +41,7 @@ func TestBadgerLog_CreateSnapshot_Config(t *testing.T) {
 
 	expected := Config{Peers: []Peer{Peer{uuid.NewV1(), "addr"}}}
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	s, err := newSnapshot(store, -1, -1, expected, newEventChannel([]Event{}), nil)
 	if !assert.Nil(t, err) {
@@ -65,7 +65,7 @@ func TestBadgerLog_CreateSnapshot_Events(t *testing.T) {
 
 	expected := []Event{[]byte{0, 1}, []byte{0, 1}}
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	s, err := newSnapshot(store, -1, -1, Config{}, newEventChannel(expected), nil)
 	if !assert.Nil(t, err) {
@@ -87,7 +87,7 @@ func TestBadgerLog_CreateSnapshot_MultipleWithEvents(t *testing.T) {
 	expected1 := []Event{[]byte{0, 1}, []byte{2, 3}}
 	expected2 := []Event{[]byte{0, 1, 2}, []byte{3}, []byte{4, 5}}
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	snapshot1, err := newSnapshot(store, -1, -1, Config{}, newEventChannel(expected1), nil)
 	if !assert.Nil(t, err) {
@@ -119,7 +119,7 @@ func TestBadgerLog_DeleteSnapshot(t *testing.T) {
 	db := badgerdb.MustOpenTemp()
 	defer badgerdb.CloseAndDelete(db)
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	events := []Event{[]byte{0, 1}, []byte{2, 3}}
 
@@ -143,7 +143,7 @@ func TestBadgerStore_New_WithConfig(t *testing.T) {
 
 	id := uuid.NewV1()
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 	log, err := store.NewLog(id, Config{})
 	if !assert.Nil(t, err) {
 		return
@@ -166,7 +166,7 @@ func TestBadgerStore_Get_NoExist(t *testing.T) {
 	defer badgerdb.Delete(db)
 	defer badgerdb.Close(db)
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	log, err := store.GetLog(uuid.NewV1())
 	assert.Nil(t, err)
@@ -181,7 +181,7 @@ func TestBadgerLog_Create_Empty(t *testing.T) {
 	defer badgerdb.Delete(db)
 	defer badgerdb.Close(db)
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	log, err := store.NewLog(uuid.NewV1(), Config{})
 	if !assert.Nil(t, err) {
@@ -219,7 +219,7 @@ func TestBadgerLog_Append_Single(t *testing.T) {
 	defer badgerdb.Delete(db)
 	defer badgerdb.Close(db)
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	log, err := store.NewLog(uuid.NewV1(), Config{})
 	if !assert.Nil(t, err) {
@@ -245,7 +245,7 @@ func TestBadgerLog_Append_Multi(t *testing.T) {
 	defer badgerdb.Delete(db)
 	defer badgerdb.Close(db)
 
-	store := NewBadgerLogStore(db)
+	store := NewBadgerLogStorage(db)
 
 	log, err := store.NewLog(uuid.NewV1(), Config{})
 	if !assert.Nil(t, err) {

@@ -25,11 +25,11 @@ type BadgerStore struct {
 	db *badger.DB
 }
 
-func NewBadgerLogStore(db *badger.DB) LogStore {
+func NewBadgerLogStorage(db *badger.DB) LogStorage {
 	return &BadgerStore{db}
 }
 
-func (s *BadgerStore) GetLog(id uuid.UUID) (StoredLog, error) {
+func (s *BadgerStore) GetLog(id uuid.UUID) (DurableLog, error) {
 	log, err := badgerOpenLog(s.db, id)
 	if err != nil || log == nil {
 		return nil, err
@@ -37,11 +37,11 @@ func (s *BadgerStore) GetLog(id uuid.UUID) (StoredLog, error) {
 	return log, nil
 }
 
-func (s *BadgerStore) NewLog(id uuid.UUID, config Config) (StoredLog, error) {
+func (s *BadgerStore) NewLog(id uuid.UUID, config Config) (DurableLog, error) {
 	return badgerCreateLog(s.db, id, config)
 }
 
-func (s *BadgerStore) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret StoredSnapshot, err error) {
+func (s *BadgerStore) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret DurableSnapshot, err error) {
 	return badgerInstallSnapshot(s.db, snapshotId, lastIndex, lastTerm, size, conf)
 }
 
@@ -99,7 +99,7 @@ func (b *BadgerLog) Id() uuid.UUID {
 	return b.id
 }
 
-func (b *BadgerLog) Store() LogStore {
+func (b *BadgerLog) Store() LogStorage {
 	return &BadgerStore{b.db}
 }
 
@@ -176,7 +176,7 @@ func (b *BadgerLog) SnapshotId() (i uuid.UUID, e error) {
 	return
 }
 
-func (b *BadgerLog) Snapshot() (StoredSnapshot, error) {
+func (b *BadgerLog) Snapshot() (DurableSnapshot, error) {
 	id, err := b.SnapshotId()
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func (b *BadgerLog) Snapshot() (StoredSnapshot, error) {
 	return badgerOpenSnapshot(b.db, id)
 }
 
-func (b *BadgerLog) Install(s StoredSnapshot) error {
+func (b *BadgerLog) Install(s DurableSnapshot) error {
 	cur, err := b.Snapshot()
 	if err != nil {
 		return err

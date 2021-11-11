@@ -7,18 +7,18 @@ import (
 
 // NOTE: With regard to error handling, there are specific error causes that consumers
 // will be looking for.  Therefore, do NOT decorate any errors that are the result
-// of the StoredLog operation.
+// of the DurableLog operation.
 
 type log struct {
 	ctx     context.Context
 	ctrl    context.Control
 	logger  context.Logger
-	storage StoredLog
+	storage DurableLog
 	head    *ref
 	commit  *ref
 }
 
-func openLog(ctx context.Context, storage StoredLog) (*log, error) {
+func openLog(ctx context.Context, storage DurableLog) (*log, error) {
 	head, _, err := storage.LastIndexAndTerm()
 	if err != nil {
 		return nil, errors.Wrapf(err, "Unable to retrieve head position for segment [%v]", storage.Id())
@@ -49,7 +49,7 @@ func (e *log) Close() error {
 	return e.ctrl.Close()
 }
 
-func (e *log) Store() LogStore {
+func (e *log) Store() LogStorage {
 	return e.storage.Store()
 }
 
@@ -109,7 +109,7 @@ func (e *log) Insert(batch []Entry) (err error) {
 	return
 }
 
-func (e *log) Snapshot() (StoredSnapshot, error) {
+func (e *log) Snapshot() (DurableSnapshot, error) {
 	return e.storage.Snapshot()
 }
 
@@ -134,7 +134,7 @@ func (e *log) Assert(index int64, term int64) (ok bool, err error) {
 	return
 }
 
-func (e *log) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, data <-chan Event, config Config) (StoredSnapshot, error) {
+func (e *log) NewSnapshot(cancel <-chan struct{}, lastIndex int64, lastTerm int64, data <-chan Event, config Config) (DurableSnapshot, error) {
 	return newSnapshot(e.storage.Store(), lastIndex, lastTerm, config, data, cancel)
 }
 

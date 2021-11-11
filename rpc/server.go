@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 )
@@ -106,7 +107,7 @@ func (s *server) newWorker(conn net.Connection) func() {
 		defer conn.Close()
 
 		for {
-			req, err := recvRequest(conn, s.opts)
+			req, err := recvRequest(conn, s.opts.Encoder, s.opts.ReadTimeout)
 			if err != nil {
 				if err != io.EOF {
 					s.logger.Error("Error receiving request [%v]: %v", err, conn.RemoteAddr())
@@ -114,7 +115,7 @@ func (s *server) newWorker(conn net.Connection) func() {
 				return
 			}
 
-			if err = sendResponse(conn, s.handle(req), s.opts); err != nil {
+			if err = sendResponse(conn, s.handle(req), s.opts.Encoder, s.opts.SendTimeout); err != nil {
 				s.logger.Error("Error sending response [%v]: %v", err, conn.RemoteAddr())
 				return
 			}
@@ -133,20 +134,20 @@ func (s *server) handle(req Request) (resp Response) {
 	return
 }
 
-func sendResponse(conn net.Connection, resp Response, opts Options) (err error) {
+func sendResponse(conn net.Connection, resp Response, enc enc.Encoder, timeout time.Duration) (err error) {
 	var buf []byte
-	if err = opts.Encoder.EncodeBinary(resp, &buf); err != nil {
+	if err = enc.EncodeBinary(resp, &buf); err != nil {
 		return
 	}
-	if err = conn.SetWriteDeadline(time.Now().Add(opts.SendTimeout)); err != nil {
+	if err = conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 		return
 	}
 	err = writePacketRaw(conn, newPacket(buf))
 	return
 }
 
-func recvRequest(conn net.Connection, opts Options) (req Request, err error) {
-	if err = conn.SetReadDeadline(time.Now().Add(opts.ReadTimeout)); err != nil {
+func recvRequest(conn net.Connection, dec enc.Decoder, timeout time.Duration) (req Request, err error) {
+	if err = conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 		return
 	}
 
@@ -155,6 +156,6 @@ func recvRequest(conn net.Connection, opts Options) (req Request, err error) {
 		return
 	}
 
-	err = opts.Encoder.DecodeBinary(p.Data, &req)
+	err = dec.DecodeBinary(p.Data, &req)
 	return
 }

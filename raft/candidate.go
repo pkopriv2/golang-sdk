@@ -43,9 +43,9 @@ func (c *candidate) start() {
 	}
 
 	c.logger.Debug("Sending ballots: (term=%v,maxIndex=%v,maxTerm=%v)", c.term.Epoch, maxIndex, maxTerm)
-	ballots := c.replica.Broadcast(func(cl *rpcClient) (interface{}, error) {
+	ballots := c.replica.Broadcast(func(cl Client) (interface{}, error) {
 		return cl.RequestVote(
-			voteRequest{
+			VoteRequest{
 				Id:          c.replica.Self.Id,
 				Term:        c.term.Epoch,
 				MaxLogIndex: maxIndex,
@@ -92,7 +92,7 @@ func (c *candidate) start() {
 					continue
 				}
 
-				vote := resp.Val.(voteResponse)
+				vote := resp.Val.(VoteResponse)
 				if vote.Term > c.term.Epoch {
 					c.replica.SetTerm(vote.Term, nil, nil)
 					c.ctrl.Close()
@@ -109,18 +109,18 @@ func (c *candidate) start() {
 }
 
 func (c *candidate) handleRequestVote(req *chans.Request) {
-	vote := req.Body().(voteRequest)
+	vote := req.Body().(VoteRequest)
 
 	c.logger.Debug("Handling vote request: %v", vote)
 	if vote.Term <= c.term.Epoch {
-		req.Ack(voteResponse{Term: c.term.Epoch, Granted: false})
+		req.Ack(VoteResponse{Term: c.term.Epoch, Granted: false})
 		return
 	}
 
 	// If the replica isn't recognized, deny the vote.
 	_, ok := c.replica.FindPeer(vote.Id)
 	if !ok {
-		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 		c.replica.SetTerm(vote.Term, nil, nil)
 		c.ctrl.Close()
 		becomeFollower(c.replica)
@@ -135,7 +135,7 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 
 	if vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
 		c.logger.Debug("Voting for candidate [%v]", vote.Id.String())
-		req.Ack(voteResponse{Term: vote.Term, Granted: true}) // should this go after the control has been closed??
+		req.Ack(VoteResponse{Term: vote.Term, Granted: true}) // should this go after the control has been closed??
 		c.replica.SetTerm(vote.Term, nil, &vote.Id)
 		becomeFollower(c.replica)
 		c.ctrl.Close()
@@ -143,14 +143,14 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 	}
 
 	c.logger.Debug("Rejecting candidate vote [%v]", vote.Id.String())
-	req.Ack(voteResponse{Term: vote.Term, Granted: false})
+	req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 	c.replica.SetTerm(vote.Term, nil, nil)
 }
 
 func (c *candidate) handleReplication(req *chans.Request) {
-	repl := req.Body().(replicateRequest)
+	repl := req.Body().(ReplicateRequest)
 	if repl.Term < c.term.Epoch {
-		req.Ack(replicateResponse{Term: c.term.Epoch, Success: false})
+		req.Ack(ReplicateResponse{Term: c.term.Epoch, Success: false})
 		return
 	}
 
@@ -161,7 +161,7 @@ func (c *candidate) handleReplication(req *chans.Request) {
 	}
 
 	// repl.term is >= term.  use it from now on.
-	req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: max})
+	req.Ack(ReplicateResponse{Term: repl.Term, Success: false, Hint: max})
 	c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
 	c.ctrl.Close()
 	becomeFollower(c.replica)

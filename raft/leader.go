@@ -113,7 +113,7 @@ func (l *leader) start() {
 	}
 
 	// Establish read barrier
-	if _, err := l.replica.LocalAppend(appendEventRequest{Event{}, NoOp}); err != nil {
+	if _, err := l.replica.Append(AppendEventRequest{Event{}, NoOp}); err != nil {
 		l.ctrl.Close()
 		becomeFollower(l.replica)
 		return
@@ -122,40 +122,40 @@ func (l *leader) start() {
 
 // leaders do not accept snapshot installations
 func (c *leader) handleInstallSnapshot(req *chans.Request) {
-	snapshot := req.Body().(installSnapshotRequest)
+	snapshot := req.Body().(InstallSnapshotRequest)
 	if snapshot.Term <= c.term.Epoch {
-		req.Ack(installSnapshotResponse{Term: c.term.Epoch, Success: false})
+		req.Ack(InstallSnapshotResponse{Term: c.term.Epoch, Success: false})
 		return
 	}
 
 	c.replica.SetTerm(snapshot.Term, &snapshot.LeaderId, &snapshot.LeaderId)
-	req.Ack(installSnapshotResponse{Term: snapshot.Term, Success: false})
+	req.Ack(InstallSnapshotResponse{Term: snapshot.Term, Success: false})
 	c.ctrl.Close()
 	becomeFollower(c.replica)
 }
 
 // leaders do not accept replication requests
 func (c *leader) handleReplication(req *chans.Request) {
-	repl := req.Body().(replicateRequest)
+	repl := req.Body().(ReplicateRequest)
 	if repl.Term <= c.term.Epoch {
-		req.Ack(replicateResponse{Term: c.term.Epoch, Success: false})
+		req.Ack(ReplicateResponse{Term: c.term.Epoch, Success: false})
 		return
 	}
 
 	c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
-	req.Ack(replicateResponse{Term: repl.Term, Success: false})
+	req.Ack(ReplicateResponse{Term: repl.Term, Success: false})
 	c.ctrl.Close()
 	becomeFollower(c.replica)
 }
 
 func (c *leader) handleReadBarrier(req *chans.Request) {
-	req.Ack(c.replica.Log.Committed())
+	req.Ack(ReadBarrierResponse{c.replica.Log.Committed()})
 	return
 }
 
 func (c *leader) handleAppend(req *chans.Request) {
 	err := c.workPool.SubmitOrCancel(req.Canceled(), func() {
-		req.Return(c.syncer.Append(req.Canceled(), req.Body().(appendEventRequest)))
+		req.Return(c.syncer.Append(req.Canceled(), req.Body().(AppendEventRequest)))
 	})
 	if err != nil {
 		req.Fail(errors.Wrapf(err, "Error submitting work to append pool."))
@@ -163,7 +163,7 @@ func (c *leader) handleAppend(req *chans.Request) {
 }
 
 func (c *leader) handleRosterUpdate(req *chans.Request) {
-	update := req.Body().(rosterUpdateRequest)
+	update := req.Body().(RosterUpdateRequest)
 
 	all := c.replica.Cluster()
 	if !update.Join {
@@ -177,7 +177,7 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		}
 
 		c.logger.Info("Removing peer: %v", update.Peer)
-		if _, e := c.replica.Append(bytes, Conf); e != nil {
+		if _, e := c.replica.Append(AppendEventRequest{bytes, Conf}); e != nil {
 			req.Fail(e)
 			return
 		} else {
@@ -233,7 +233,7 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	}
 
 	c.logger.Info("Joining peer [%v]", update.Peer)
-	if _, e := c.replica.Append(bytes, Conf); e != nil {
+	if _, e := c.replica.Append(AppendEventRequest{bytes, Conf}); e != nil {
 		req.Fail(e)
 		return
 	} else {
@@ -243,20 +243,20 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 }
 
 func (c *leader) handleRequestVote(req *chans.Request) {
-	vote := req.Body().(voteRequest)
+	vote := req.Body().(VoteRequest)
 
 	c.logger.Debug("Handling request vote: %v", vote)
 
 	// previous or current term vote.  (immediately decline.  already leader)
 	if vote.Term <= c.term.Epoch {
-		req.Ack(voteResponse{Term: c.term.Epoch, Granted: false})
+		req.Ack(VoteResponse{Term: c.term.Epoch, Granted: false})
 		return
 	}
 
 	// deny the vote if we don't know about the peer.
 	_, ok := c.replica.FindPeer(vote.Id)
 	if !ok {
-		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 		c.replica.SetTerm(vote.Term, nil, nil)
 		c.ctrl.Close()
 		becomeFollower(c.replica)
@@ -266,16 +266,16 @@ func (c *leader) handleRequestVote(req *chans.Request) {
 	// future term vote.  (move to new term.  only accept if candidate log is long enough)
 	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {
-		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 		return
 	}
 
 	if vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
 		c.replica.SetTerm(vote.Term, nil, &vote.Id)
-		req.Ack(voteResponse{Term: vote.Term, Granted: true})
+		req.Ack(VoteResponse{Term: vote.Term, Granted: true})
 	} else {
 		c.replica.SetTerm(vote.Term, nil, nil)
-		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 	}
 
 	c.ctrl.Close()
@@ -284,12 +284,12 @@ func (c *leader) handleRequestVote(req *chans.Request) {
 
 func (c *leader) broadcastHeartbeat() bool {
 	syncers := c.syncer.Syncers()
-	ch := make(chan replicateResponse, len(syncers))
+	ch := make(chan ReplicateResponse, len(syncers))
 	for _, p := range syncers {
 		go func(p *peerSyncer) {
 			resp, err := p.Heartbeat(c.ctrl.Closed())
 			if err != nil {
-				ch <- replicateResponse{Term: c.term.Epoch, Success: false}
+				ch <- ReplicateResponse{Term: c.term.Epoch, Success: false}
 			} else {
 				ch <- resp
 			}
@@ -438,7 +438,7 @@ func (s *logSyncer) start() {
 	}()
 }
 
-func (s *logSyncer) Append(cancel <-chan struct{}, req appendEventRequest) (entry Entry, err error) {
+func (s *logSyncer) Append(cancel <-chan struct{}, req AppendEventRequest) (entry Entry, err error) {
 	entry, err = s.self.Log.Append(req.Event, s.term.Epoch, req.Kind)
 	if err != nil {
 		s.ctrl.Fail(err)
@@ -515,7 +515,7 @@ type peerSyncer struct {
 	prevIndex int64
 	prevTerm  int64
 	prevLock  sync.RWMutex
-	pool      pool.ObjectPool // T: *rpcClient
+	pool      pool.ObjectPool // T: Client
 }
 
 func newPeerSyncer(ctx context.Context, self *replica, term Term, peer Peer) *peerSyncer {
@@ -556,13 +556,13 @@ func (l *peerSyncer) setPrevIndexAndTerm(index int64, term int64) {
 	l.prevTerm = term
 }
 
-func (s *peerSyncer) Send(cancel <-chan struct{}, fn func(cl *rpcClient) error) error {
+func (s *peerSyncer) Send(cancel <-chan struct{}, fn func(cl Client) error) error {
 	raw, err := s.pool.TakeOrCancel(cancel)
 	if err != nil {
 		return err
 	}
 
-	if err := fn(raw.(*rpcClient)); err != nil {
+	if err := fn(raw.(Client)); err != nil {
 		s.pool.Fail(raw)
 		return err
 	} else {
@@ -571,8 +571,8 @@ func (s *peerSyncer) Send(cancel <-chan struct{}, fn func(cl *rpcClient) error) 
 	}
 }
 
-func (s *peerSyncer) Heartbeat(cancel <-chan struct{}) (resp replicateResponse, err error) {
-	err = s.Send(cancel, func(cl *rpcClient) error {
+func (s *peerSyncer) Heartbeat(cancel <-chan struct{}) (resp ReplicateResponse, err error) {
+	err = s.Send(cancel, func(cl Client) error {
 		resp, err = cl.Replicate(newHeartBeat(s.self.Self.Id, s.term.Epoch, s.self.Log.Committed()))
 		return err
 	})
@@ -608,7 +608,7 @@ func (s *peerSyncer) start() {
 
 				// might have to reinitialize client after each batch.
 				s.logger.Debug("Position [%v/%v]", prev.Index, next)
-				err := s.Send(s.ctrl.Closed(), func(cl *rpcClient) error {
+				err := s.Send(s.ctrl.Closed(), func(cl Client) error {
 					prev, ok, err = s.sendBatch(cl, prev, next)
 					if err != nil {
 						return errors.Wrapf(err, "Error sending batch [start=%v,end=%v]", prev.Index, next)
@@ -716,7 +716,7 @@ func (s *peerSyncer) getLatestLocalEntry() (Entry, error) {
 }
 
 // Sends a batch up to the horizon
-func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry, bool, error) {
+func (s *peerSyncer) sendBatch(cl Client, prev Entry, horizon int64) (Entry, bool, error) {
 	// scan a full batch of events.
 	batch, err := s.self.Log.Scan(prev.Index+1, min(horizon+1, prev.Index+1+256))
 	if err != nil || len(batch) == 0 {
@@ -746,7 +746,7 @@ func (s *peerSyncer) sendBatch(cl *rpcClient, prev Entry, horizon int64) (Entry,
 	return prev, ok, err
 }
 
-func (s *peerSyncer) sendSnapshotToClient(cl *rpcClient) (Entry, error) {
+func (s *peerSyncer) sendSnapshotToClient(cl Client) (Entry, error) {
 	snapshot, err := s.self.Log.Snapshot()
 	if err != nil {
 		return Entry{}, err
@@ -761,10 +761,10 @@ func (s *peerSyncer) sendSnapshotToClient(cl *rpcClient) (Entry, error) {
 }
 
 // sends the snapshot to the client
-func (l *peerSyncer) sendSnapshot(cl *rpcClient, snapshot StoredSnapshot) error {
+func (l *peerSyncer) sendSnapshot(cl Client, snapshot DurableSnapshot) error {
 	snapshotId := uuid.NewV1() // generate a random snapshot id for safe multi-tenancy in the db
-	sendSegment := func(cl *rpcClient, offset int64, batch []Event) error {
-		segment := installSnapshotRequest{
+	sendSegment := func(cl Client, offset int64, batch []Event) error {
+		segment := InstallSnapshotRequest{
 			LeaderId:    l.self.Self.Id,
 			Term:        l.term.Epoch,
 			Id:          snapshotId,

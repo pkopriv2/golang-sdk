@@ -14,8 +14,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+var (
+	LogLevel = context.Info
+)
+
 func TestHost_Close(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Debug)
+	ctx := context.NewContext(os.Stdout, LogLevel)
 	defer ctx.Close()
 
 	before := runtime.NumGoroutine()
@@ -104,7 +108,7 @@ func TestHost_Close(t *testing.T) {
 //}
 
 func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Info)
+	ctx := context.NewContext(os.Stdout, LogLevel)
 	defer ctx.Close()
 
 	cluster, err := StartTestCluster(ctx, 2)
@@ -129,7 +133,7 @@ func TestHost_Cluster_ConvergeTwoPeers(t *testing.T) {
 }
 
 func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Info)
+	ctx := context.NewContext(os.Stdout, LogLevel)
 	defer ctx.Close()
 
 	cluster, err := StartTestCluster(ctx, 3)
@@ -147,7 +151,7 @@ func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
 }
 
 func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Info)
+	ctx := context.NewContext(os.Stdout, LogLevel)
 	defer ctx.Close()
 
 	cluster, err := StartTestCluster(ctx, 5)
@@ -165,7 +169,7 @@ func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 }
 
 func TestHost_Cluster_Append(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Info)
+	ctx := context.NewContext(os.Stdout, LogLevel)
 	defer ctx.Close()
 
 	cluster, err := StartTestCluster(ctx, 3)
@@ -234,7 +238,7 @@ func TestHost_Cluster_Append(t *testing.T) {
 }
 
 func TestHost_Cluster_Append_Concurrent(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Info)
+	ctx := context.NewContext(os.Stdout, LogLevel)
 	defer func() {
 		ctx.Close()
 	}()
@@ -298,7 +302,7 @@ func TestHost_Cluster_Append_Concurrent(t *testing.T) {
 }
 
 func TestHost_Cluster_FailedLeader(t *testing.T) {
-	ctx := context.NewContext(os.Stdout, context.Info)
+	ctx := context.NewContext(os.Stdout, LogLevel)
 	defer func() {
 		ctx.Close()
 	}()
@@ -330,7 +334,7 @@ func TestHost_Cluster_FailedLeader(t *testing.T) {
 
 //func TestHost_Cluster_Join_Busy(t *testing.T) {
 //conf := context.NewConfig(map[string]interface{}{
-//"bourne.log.level": int(context.Debug),
+//"bourne.log.level": int(LogLevel),
 //})
 //ctx := context.NewContext(conf)
 //defer ctx.Close()
@@ -387,7 +391,7 @@ func TestHost_Cluster_FailedLeader(t *testing.T) {
 ////
 //// func Benchmark_Append_3_10_10(t *testing.B) {
 //// conf := context.NewConfig(map[string]interface{}{
-//// "bourne.log.level": int(context.Debug),
+//// "bourne.log.level": int(LogLevel),
 //// })
 ////
 //// ctx := context.NewContext(conf)

@@ -42,7 +42,7 @@ type replica struct {
 	Log *log
 
 	// the durable term store.
-	Terms PeerStore
+	Terms PeerStorage
 
 	// data lock (currently using very coarse lock)
 	lock sync.RWMutex
@@ -78,7 +78,7 @@ type replica struct {
 	RosterUpdates chan *chans.Request
 }
 
-func newReplica(ctx context.Context, store LogStore, termStore PeerStore, addr string, opts Options) (*replica, error) {
+func newReplica(ctx context.Context, store LogStorage, termStore PeerStorage, addr string, opts Options) (*replica, error) {
 
 	id, err := getOrCreateReplicaId(termStore, addr)
 	if err != nil {
@@ -215,7 +215,7 @@ type broadCastResponse struct {
 	Val  interface{}
 }
 
-func (r *replica) Broadcast(fn func(c *rpcClient) (interface{}, error)) <-chan broadCastResponse {
+func (r *replica) Broadcast(fn func(c Client) (interface{}, error)) <-chan broadCastResponse {
 	peers := r.Others()
 	ret := make(chan broadCastResponse, len(peers))
 	for _, p := range peers {
@@ -265,10 +265,6 @@ func (r *replica) sendRequest(ch chan<- *chans.Request, timeout time.Duration, v
 	}
 }
 
-func (r *replica) Append(event Event, kind Kind) (Entry, error) {
-	return r.LocalAppend(appendEventRequest{event, kind})
-}
-
 func (r *replica) Listen(start int64, buf int64) (Listener, error) {
 	return r.Log.ListenCommits(start, buf)
 }
@@ -277,52 +273,52 @@ func (r *replica) Compact(cancel <-chan struct{}, until int64, data <-chan Event
 	return r.Log.Compact(cancel, until, data, Config{r.Cluster()})
 }
 
-func (r *replica) UpdateRoster(update rosterUpdateRequest) error {
-	_, err := r.sendRequest(r.RosterUpdates, 30*time.Second, update)
-	return err
-}
-
-func (r *replica) ReadBarrier() (int64, error) {
-	val, err := r.sendRequest(r.Barrier, r.Options.ReadTimeout, nil)
+func (r *replica) Append(req AppendEventRequest) (ret Entry, err error) {
+	val, err := r.sendRequest(r.Appends, r.Options.ReadTimeout, req)
 	if err != nil {
-		return 0, err
-	}
-	return val.(int64), nil
-}
-
-func (r *replica) InstallSnapshot(snapshot installSnapshotRequest) (installSnapshotResponse, error) {
-	val, err := r.sendRequest(r.Snapshots, r.Options.ReadTimeout, snapshot)
-	if err != nil {
-		return installSnapshotResponse{}, err
-	}
-	return val.(installSnapshotResponse), nil
-}
-
-func (r *replica) Replicate(req replicateRequest) (replicateResponse, error) {
-	val, err := r.sendRequest(r.Replications, r.Options.ReadTimeout, req)
-	if err != nil {
-		return replicateResponse{}, err
-	}
-	return val.(replicateResponse), nil
-}
-
-func (r *replica) RequestVote(vote voteRequest) (voteResponse, error) {
-	val, err := r.sendRequest(r.VoteRequests, r.Options.ReadTimeout, vote)
-	if err != nil {
-		return voteResponse{}, err
-	}
-	return val.(voteResponse), nil
-}
-
-func (r *replica) LocalAppend(event appendEventRequest) (Entry, error) {
-	val, err := r.sendRequest(r.Appends, r.Options.ReadTimeout, event)
-	if err != nil {
-		return Entry{}, err
+		return
 	}
 	return val.(Entry), nil
 }
 
-func getOrCreateReplicaId(store PeerStore, addr string) (id uuid.UUID, err error) {
+func (r *replica) UpdateRoster(update RosterUpdateRequest) error {
+	_, err := r.sendRequest(r.RosterUpdates, r.Options.ReadTimeout, update)
+	return err
+}
+
+func (r *replica) ReadBarrier() (ret ReadBarrierResponse, err error) {
+	val, err := r.sendRequest(r.Barrier, r.Options.ReadTimeout, nil)
+	if err != nil {
+		return
+	}
+	return val.(ReadBarrierResponse), nil
+}
+
+func (r *replica) InstallSnapshot(snapshot InstallSnapshotRequest) (ret InstallSnapshotResponse, err error) {
+	val, err := r.sendRequest(r.Snapshots, r.Options.ReadTimeout, snapshot)
+	if err != nil {
+		return InstallSnapshotResponse{}, err
+	}
+	return val.(InstallSnapshotResponse), nil
+}
+
+func (r *replica) Replicate(req ReplicateRequest) (ReplicateResponse, error) {
+	val, err := r.sendRequest(r.Replications, r.Options.ReadTimeout, req)
+	if err != nil {
+		return ReplicateResponse{}, err
+	}
+	return val.(ReplicateResponse), nil
+}
+
+func (r *replica) RequestVote(vote VoteRequest) (VoteResponse, error) {
+	val, err := r.sendRequest(r.VoteRequests, r.Options.ReadTimeout, vote)
+	if err != nil {
+		return VoteResponse{}, err
+	}
+	return val.(VoteResponse), nil
+}
+
+func getOrCreateReplicaId(store PeerStorage, addr string) (id uuid.UUID, err error) {
 	id, ok, err := store.GetPeerId(addr)
 	if err != nil {
 		err = errors.Wrapf(err, "Error retrieving id for address [%v]", addr)
@@ -339,7 +335,7 @@ func getOrCreateReplicaId(store PeerStore, addr string) (id uuid.UUID, err error
 	return
 }
 
-func getOrCreateLog(ctx context.Context, store LogStore, self Peer) (ret *log, err error) {
+func getOrCreateLog(ctx context.Context, store LogStorage, self Peer) (ret *log, err error) {
 	raw, err := store.GetLog(self.Id)
 	if err != nil {
 		err = errors.Wrapf(err, "Error opening stored log [%v]", self.Id)

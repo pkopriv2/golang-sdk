@@ -93,9 +93,9 @@ func (c *follower) handleRosterUpdate(req *chans.Request) {
 }
 
 func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
-	segment := req.Body().(installSnapshotRequest)
+	segment := req.Body().(InstallSnapshotRequest)
 	if segment.Term < c.term.Epoch {
-		req.Ack(installSnapshotResponse{Term: c.term.Epoch, Success: false})
+		req.Ack(InstallSnapshotResponse{Term: c.term.Epoch, Success: false})
 		return
 	}
 
@@ -108,7 +108,7 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 	}
 
 	if segment.BatchOffset+int64(len(segment.Batch)) < segment.Size {
-		req.Ack(installSnapshotResponse{Term: c.term.Epoch, Success: true})
+		req.Ack(InstallSnapshotResponse{Term: c.term.Epoch, Success: true})
 		return
 	}
 
@@ -120,17 +120,17 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 	}
 
 	c.logger.Info("Successfully installed snapshot [id=%v,size=%v]", snapshot.Id().String()[:8], snapshot.Size())
-	req.Ack(installSnapshotResponse{Term: c.term.Epoch, Success: true})
+	req.Ack(InstallSnapshotResponse{Term: c.term.Epoch, Success: true})
 }
 
 func (c *follower) handleRequestVote(req *chans.Request) {
-	vote := req.Body().(voteRequest)
+	vote := req.Body().(VoteRequest)
 
 	c.logger.Debug("Handling request vote [%v]", vote)
 
 	// previous term vote.  (immediately decline.)
 	if vote.Term < c.term.Epoch {
-		req.Ack(voteResponse{Term: c.term.Epoch, Granted: false})
+		req.Ack(VoteResponse{Term: c.term.Epoch, Granted: false})
 		return
 	}
 
@@ -144,7 +144,7 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 	// If the replica isn't recognized, deny the vote. Immediately become candidate
 	_, ok := c.replica.FindPeer(vote.Id)
 	if !ok {
-		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 		c.replica.SetTerm(vote.Term, nil, nil)
 		c.ctrl.Close()
 		becomeCandidate(c.replica)
@@ -154,7 +154,7 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 	if vote.Term == c.term.Epoch {
 		if c.term.VotedFor == nil && vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
 			c.logger.Debug("Voting for candidate [%v]", vote.Id)
-			req.Ack(voteResponse{Term: vote.Term, Granted: true})
+			req.Ack(VoteResponse{Term: vote.Term, Granted: true})
 			c.replica.SetTerm(vote.Term, nil, &vote.Id) // correct?
 			c.ctrl.Close()
 			becomeFollower(c.replica)
@@ -162,7 +162,7 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 		}
 
 		c.logger.Debug("Rejecting candidate vote [%v]", vote.Id)
-		req.Ack(voteResponse{Term: vote.Term, Granted: false})
+		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 		c.ctrl.Close()
 		becomeCandidate(c.replica)
 		return
@@ -171,7 +171,7 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 	// handle: future term vote.  (move to new term.  only accept if candidate log is long enough)
 	if vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
 		c.logger.Debug("Voting for candidate [%v]", vote.Id)
-		req.Ack(voteResponse{Term: vote.Term, Granted: true})
+		req.Ack(VoteResponse{Term: vote.Term, Granted: true})
 		c.replica.SetTerm(vote.Term, nil, &vote.Id)
 		c.ctrl.Close()
 		becomeFollower(c.replica)
@@ -179,16 +179,16 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 	}
 
 	c.logger.Debug("Rejecting candidate vote [%v]", vote.Id)
-	req.Ack(voteResponse{Term: vote.Term, Granted: false})
+	req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 	c.replica.SetTerm(vote.Term, nil, nil)
 	c.ctrl.Close()
 	becomeCandidate(c.replica)
 }
 
 func (c *follower) handleReplication(req *chans.Request) {
-	repl := req.Body().(replicateRequest)
+	repl := req.Body().(ReplicateRequest)
 	if repl.Term < c.term.Epoch {
-		req.Ack(replicateResponse{Term: c.term.Epoch, Success: false})
+		req.Ack(ReplicateResponse{Term: c.term.Epoch, Success: false})
 		return
 	}
 
@@ -203,7 +203,7 @@ func (c *follower) handleReplication(req *chans.Request) {
 			return
 		}
 
-		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
+		req.Ack(ReplicateResponse{Term: repl.Term, Success: false, Hint: hint})
 		c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
 		c.ctrl.Close()
 		becomeFollower(c.replica)
@@ -215,7 +215,7 @@ func (c *follower) handleReplication(req *chans.Request) {
 
 	// if this is a heartbeat, bail out
 	if len(repl.Items) == 0 {
-		req.Ack(replicateResponse{Term: repl.Term, Success: true})
+		req.Ack(ReplicateResponse{Term: repl.Term, Success: true})
 		return
 	}
 
@@ -235,7 +235,7 @@ func (c *follower) handleReplication(req *chans.Request) {
 		}
 
 		c.logger.Debug("Consistency check failed. Responding with hint [%v]", hint)
-		req.Ack(replicateResponse{Term: repl.Term, Success: false, Hint: hint})
+		req.Ack(ReplicateResponse{Term: repl.Term, Success: false, Hint: hint})
 		return
 	}
 
@@ -246,5 +246,5 @@ func (c *follower) handleReplication(req *chans.Request) {
 		return
 	}
 
-	req.Ack(replicateResponse{Term: repl.Term, Success: true})
+	req.Ack(ReplicateResponse{Term: repl.Term, Success: true})
 }

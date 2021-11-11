@@ -35,15 +35,15 @@ var (
 	termIdPrefix = bin.String("term.id")
 )
 
-type BadgerPeerStore struct {
+type BadgerPeerStorage struct {
 	db *badger.DB
 }
 
-func NewBadgerPeerStore(db *badger.DB) PeerStore {
-	return &BadgerPeerStore{db}
+func NewBadgerPeerStorage(db *badger.DB) PeerStorage {
+	return &BadgerPeerStorage{db}
 }
 
-func (t *BadgerPeerStore) GetPeerId(addr string) (id uuid.UUID, ok bool, err error) {
+func (t *BadgerPeerStorage) GetPeerId(addr string) (id uuid.UUID, ok bool, err error) {
 	err = t.db.View(func(tx *badger.Txn) (err error) {
 		item, err := tx.Get(termIdPrefix.String(addr))
 		if err != nil {
@@ -69,13 +69,13 @@ func (t *BadgerPeerStore) GetPeerId(addr string) (id uuid.UUID, ok bool, err err
 	return
 }
 
-func (t *BadgerPeerStore) SetPeerId(addr string, id uuid.UUID) error {
+func (t *BadgerPeerStorage) SetPeerId(addr string, id uuid.UUID) error {
 	return t.db.Update(func(tx *badger.Txn) error {
 		return tx.Set(termIdPrefix.String(addr), id.Bytes())
 	})
 }
 
-func (t *BadgerPeerStore) GetActiveTerm(id uuid.UUID) (term Term, ok bool, err error) {
+func (t *BadgerPeerStorage) GetActiveTerm(id uuid.UUID) (term Term, ok bool, err error) {
 	err = t.db.View(func(tx *badger.Txn) (err error) {
 		item, err := tx.Get(termPrefix.UUID(id))
 		if err != nil {
@@ -96,7 +96,7 @@ func (t *BadgerPeerStore) GetActiveTerm(id uuid.UUID) (term Term, ok bool, err e
 	return
 }
 
-func (t *BadgerPeerStore) SetActiveTerm(id uuid.UUID, term Term) error {
+func (t *BadgerPeerStorage) SetActiveTerm(id uuid.UUID, term Term) error {
 	return t.db.Update(func(tx *badger.Txn) (err error) {
 		bytes, err := enc.Encode(enc.Json, term)
 		if err != nil {

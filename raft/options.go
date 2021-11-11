@@ -2,9 +2,6 @@ package raft
 
 import (
 	"time"
-
-	"github.com/pkopriv2/golang-sdk/lang/enc"
-	"github.com/pkopriv2/golang-sdk/lang/net"
 )
 
 const (
@@ -13,17 +10,22 @@ const (
 
 type Option func(*Options)
 
+type Timeouts struct {
+	DialTimeout time.Duration
+	ReadTimeout time.Duration
+	SendTimeout time.Duration
+}
+
 type Options struct {
-	LogStorage      LogStore
-	PeerStorage     PeerStore
-	Network         net.Network
+	LogStorage      LogStorage
+	PeerStorage     PeerStorage
+	Transport       Transport
 	DialTimeout     time.Duration
 	ReadTimeout     time.Duration
 	SendTimeout     time.Duration
 	ElectionTimeout time.Duration
 	Workers         int
 	MaxConns        int
-	Encoder         enc.EncoderDecoder
 }
 
 func (o Options) Update(fns ...func(*Options)) (ret Options) {
@@ -34,16 +36,22 @@ func (o Options) Update(fns ...func(*Options)) (ret Options) {
 	return
 }
 
+func (o Options) Timeouts() (ret Timeouts) {
+	return Timeouts{
+		DialTimeout: o.DialTimeout,
+		ReadTimeout: o.ReadTimeout,
+		SendTimeout: o.SendTimeout,
+	}
+}
+
 func buildOptions(fns ...Option) (ret Options) {
 	ret = Options{
-		Network:         net.NewTCP4Network(),
 		DialTimeout:     30 * time.Second,
 		ReadTimeout:     30 * time.Second,
 		SendTimeout:     30 * time.Second,
 		ElectionTimeout: 30 * time.Second,
 		Workers:         10,
 		MaxConns:        5,
-		Encoder:         enc.Gob,
 	}
 	for _, fn := range fns {
 		fn(&ret)
@@ -51,15 +59,21 @@ func buildOptions(fns ...Option) (ret Options) {
 	return
 }
 
-func WithLogStorage(store LogStore) Option {
+func WithLogStorage(store LogStorage) Option {
 	return func(o *Options) {
 		o.LogStorage = store
 	}
 }
 
-func WithPeerStorage(store PeerStore) Option {
+func WithPeerStorage(store PeerStorage) Option {
 	return func(o *Options) {
 		o.PeerStorage = store
+	}
+}
+
+func WithTransport(tx Transport) Option {
+	return func(o *Options) {
+		o.Transport = tx
 	}
 }
 

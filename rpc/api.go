@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"io"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
@@ -37,6 +38,22 @@ func BuildHandlers(b ...Builder) (ret map[string]Handler) {
 type Server interface {
 	io.Closer
 	Connect() (Client, error)
+}
+
+// A socket accepts connections and instancies sessions from clients
+type Socket interface {
+	io.Closer
+	Addr() string
+	Accept() (Session, error)
+}
+
+// A session manages a server connection from a client.
+type Session interface {
+	io.Closer
+	LocalAddr() string
+	RemoteAddr() string
+	Read(time.Duration) (Request, error)
+	Send(Response, time.Duration) error
 }
 
 // A client gives consumers access to invoke a server's handlers.
@@ -81,6 +98,10 @@ func BuildRequest(fns ...func(*Request) error) (ret Request, err error) {
 	}
 	return
 }
+
+var (
+	EmptyResponse = Response{Ok: true}
+)
 
 func NewErrorResponse(err error) Response {
 	if err != nil {

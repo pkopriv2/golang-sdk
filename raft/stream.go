@@ -4,12 +4,12 @@ import "github.com/pkopriv2/golang-sdk/lang/context"
 
 type snapshotStream struct {
 	ctrl     context.Control
-	snapshot StoredSnapshot
+	snapshot DurableSnapshot
 	buf      int64
 	ch       chan Event
 }
 
-func newSnapshotStream(ctrl context.Control, snapshot StoredSnapshot, buf int64) *snapshotStream {
+func newSnapshotStream(ctrl context.Control, snapshot DurableSnapshot, buf int64) *snapshotStream {
 	l := &snapshotStream{
 		ctrl:     ctrl.Sub(),
 		snapshot: snapshot,

@@ -115,6 +115,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/context"
@@ -312,9 +313,9 @@ type EventStream interface {
 	Data() <-chan Event
 }
 
-// The following APIs describe the storage layer requirements.
-// Consumers are free to swap or implement their own as necessary.
-// This library currently ships with a badgerdb (https://github.com/dgraph-io/badger)
+// The following APIs describe the storage layer. Consumers are free
+// to swap or implement their own as necessary. This library currently
+// ships with a badgerdb (https://github.com/dgraph-io/badger)
 // implementation.
 var (
 	ErrNoEntry     = errors.New("Raft:ErrNoEntry")
@@ -327,7 +328,7 @@ var (
 )
 
 // Stores information regarding the state of the peer and elections.
-type PeerStore interface {
+type PeerStorage interface {
 	GetPeerId(addr string) (uuid.UUID, bool, error)
 	SetPeerId(addr string, id uuid.UUID) error
 	GetActiveTerm(peerId uuid.UUID) (Term, bool, error)
@@ -335,28 +336,28 @@ type PeerStore interface {
 }
 
 // Stores information about logs and snapshots.
-type LogStore interface {
-	GetLog(logId uuid.UUID) (StoredLog, error)
-	NewLog(logId uuid.UUID, config Config) (StoredLog, error)
+type LogStorage interface {
+	GetLog(logId uuid.UUID) (DurableLog, error)
+	NewLog(logId uuid.UUID, config Config) (DurableLog, error)
 	InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error
-	InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (StoredSnapshot, error)
+	InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, config Config) (DurableSnapshot, error)
 }
 
 // A StoredLog represents a durable log.
-type StoredLog interface {
+type DurableLog interface {
 	Id() uuid.UUID
-	Store() LogStore
+	Store() LogStorage
 	LastIndexAndTerm() (index int64, term int64, err error)
 	Scan(beg int64, end int64) ([]Entry, error)
 	Append(data []byte, term int64, k Kind) (Entry, error)
 	Get(index int64) (Entry, bool, error)
 	Insert([]Entry) error
-	Install(StoredSnapshot) error
-	Snapshot() (StoredSnapshot, error)
+	Install(DurableSnapshot) error
+	Snapshot() (DurableSnapshot, error)
 }
 
-// A StoredSnapshot represents a durable snapshot with its associated events
-type StoredSnapshot interface {
+// A Snapshot represents a durable snapshot with its associated events
+type DurableSnapshot interface {
 	Id() uuid.UUID
 	LastIndex() int64
 	LastTerm() int64
@@ -366,8 +367,159 @@ type StoredSnapshot interface {
 	Delete() error
 }
 
+// The following APIs describe the transport layer APIs.
+// Consumers are free to swap or implement their own as necessary.
+// This library currently ships with a simple rpc implementation.
+
+// The transport is the primary interface that describes how to
+// communicate with peers.
+type Transport interface {
+	Listen(addr string) (Socket, error)
+	Dial(addr string, opts Timeouts) (Client, error)
+}
+
+// Generates new server sessions.
+type Socket interface {
+	io.Closer
+	Addr() string
+	Accept() (Session, error)
+}
+
+// Manages the lifecycle of a single client connection.
+type Session interface {
+	io.Closer
+
+	// Returns the local address of the session.
+	LocalAddr() string
+
+	// Returns the remote address of the session.
+	RemoteAddr() string
+
+	// Returns the next request from the session.  The returned value
+	// must be one of:
+	//
+	//	* StatusRequest
+	//  * ReadBarrierRequest
+	//  * RosterUpdateRequest
+	//  * ReplicateRequest
+	//  * VoteRequest
+	//  * AppendEventRequest
+	//  * InstallSnapshotRequest
+	//
+	Read(time.Duration) (interface{}, error)
+
+	// Sends a response to the client.  Must be one of:
+	//
+	//	* nil
+	//	* error
+	//	* StatusResponse
+	//  * ReadBarrierResponse
+	//  * RosterUpdateResponse
+	//  * ReplicateResponse
+	//  * VoteResponse
+	//  * AppendEventResponse
+	//  * InstallSnapshotResponse
+	//
+	Send(interface{}, time.Duration) error
+}
+
+// The internal client api.
+type Client interface {
+	io.Closer
+	Barrier() (ReadBarrierResponse, error)
+	Status() (StatusResponse, error)
+	RequestVote(VoteRequest) (VoteResponse, error)
+	UpdateRoster(RosterUpdateRequest) error
+	Replicate(ReplicateRequest) (ReplicateResponse, error)
+	Append(AppendEventRequest) (AppendEventResponse, error)
+	InstallSnapshotSegment(InstallSnapshotRequest) (InstallSnapshotResponse, error)
+}
+
+type StatusRequest struct{}
+
+type StatusResponse struct {
+	Self   Peer   `json:"self"`
+	Term   Term   `json:"term"`
+	Config Config `json:"config"`
+}
+
+type ReadBarrierRequest struct{}
+
+type ReadBarrierResponse struct {
+	Barrier int64 `json:"barrier"`
+}
+
+type RosterUpdateRequest struct {
+	Peer Peer `json:"peer"`
+	Join bool `json:"join"`
+}
+
+type RosterUpdateResponse struct{}
+
+type ReplicateRequest struct {
+	LeaderId     uuid.UUID `json:"leader_id"`
+	Term         int64     `json:"term"`
+	PrevLogIndex int64     `json:"prev_log_index"`
+	PrevLogTerm  int64     `json:"prev_log_term"`
+	Items        []Entry   `json:"items"`
+	Commit       int64     `json:"commit"`
+}
+
+type ReplicateResponse struct {
+	Term    int64 `json:"term"`
+	Success bool  `json:"success"`
+	Hint    int64 `json:"hint"` // used for fast agreemnt
+}
+
+func newHeartBeat(id uuid.UUID, term int64, commit int64) ReplicateRequest {
+	return ReplicateRequest{id, term, -1, -1, []Entry{}, commit}
+}
+
+func newReplication(id uuid.UUID, term int64, prevIndex int64, prevTerm int64, items []Entry, commit int64) ReplicateRequest {
+	return ReplicateRequest{id, term, prevIndex, prevTerm, items, commit}
+}
+
+type VoteRequest struct {
+	Id          uuid.UUID `json:"id"`
+	Term        int64     `json:"term"`
+	MaxLogIndex int64     `json:"max_log_index"`
+	MaxLogTerm  int64     `json:"max_log_term"`
+}
+
+type VoteResponse struct {
+	Term    int64 `json:"term"`
+	Granted bool  `json:"granted"`
+}
+
+type AppendEventRequest struct {
+	Event []byte `json:"event"`
+	Kind  Kind   `json:"kind"`
+}
+
+type AppendEventResponse struct {
+	Index int64 `json:"index"`
+	Term  int64 `json:"term"`
+}
+
+type InstallSnapshotRequest struct {
+	LeaderId    uuid.UUID `json:"leader_id"`
+	Id          uuid.UUID `json:"id"`
+	Term        int64     `json:"term"`
+	Config      Config    `json:"config"`
+	Size        int64     `json:"size"`
+	MaxIndex    int64     `json:"max_index"`
+	MaxTerm     int64     `json:"max_term"`
+	BatchOffset int64     `json:"batch_offset"`
+	Batch       []Event   `json:"batch"`
+}
+
+type InstallSnapshotResponse struct {
+	Term    int64 `json:"term"`
+	Success bool  `json:"success"`
+}
+
 // Installs a new snapshot of unknown size from a channel events events
-func newSnapshot(store LogStore, lastIndex, lastTerm int64, config Config, data <-chan Event, cancel <-chan struct{}) (ret StoredSnapshot, err error) {
+func newSnapshot(store LogStorage, lastIndex, lastTerm int64, config Config, data <-chan Event, cancel <-chan struct{}) (ret DurableSnapshot, err error) {
 	snapshotId := uuid.NewV1()
 
 	offset := int64(0)

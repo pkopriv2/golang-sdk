@@ -8,7 +8,7 @@ import (
 )
 
 type syncer struct {
-	pool pool.ObjectPool // T: *rpcClient
+	pool pool.ObjectPool // T: Client
 	ref  *ref
 }
 
@@ -57,7 +57,8 @@ func (s *syncer) Barrier(cancel <-chan struct{}) (val int64, err error) {
 			}
 		}
 
-		val, err = raw.(*rpcClient).Barrier()
+		var resp ReadBarrierResponse
+		resp, err = raw.(Client).Barrier()
 		if err != nil {
 			s.pool.Fail(raw)
 
@@ -72,6 +73,7 @@ func (s *syncer) Barrier(cancel <-chan struct{}) (val int64, err error) {
 			}
 		}
 
+		val = resp.Barrier
 		s.pool.Return(raw)
 		return
 	}

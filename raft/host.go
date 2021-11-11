@@ -8,23 +8,22 @@ import (
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/badgerdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/pkopriv2/golang-sdk/lang/enc"
 	"github.com/pkopriv2/golang-sdk/lang/errs"
+	"github.com/pkopriv2/golang-sdk/lang/net"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
-	"github.com/pkopriv2/golang-sdk/rpc"
 	uuid "github.com/satori/go.uuid"
 )
 
-// FIXME: Need to discover self address from remote address.
-
-// a host simply binds a network service with the core log machine.
+// A host implements the Host abstraction as defined in api.go.
 type host struct {
 	ctx        context.Context
 	ctrl       context.Control
 	logger     context.Logger
-	server     rpc.Server
+	server     *server
 	replica    *replica
 	sync       *syncer
-	leaderPool pool.ObjectPool // T: *rpcClient
+	leaderPool pool.ObjectPool // T: Client
 }
 
 func newHost(ctx context.Context, addr string, opts Options) (h *host, err error) {
@@ -44,7 +43,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 			badgerdb.CloseAndDelete(db)
 		})
 
-		opts = opts.Update(WithLogStorage(NewBadgerLogStore(db)))
+		opts = opts.Update(WithLogStorage(NewBadgerLogStorage(db)))
 	}
 
 	if opts.PeerStorage == nil {
@@ -56,32 +55,25 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 			badgerdb.CloseAndDelete(db)
 		})
 
-		opts = opts.Update(WithPeerStorage(NewBadgerPeerStore(db)))
+		opts = opts.Update(WithPeerStorage(NewBadgerPeerStorage(db)))
 	}
 
-	listener, err := opts.Network.Listen(addr)
+	if opts.Transport == nil {
+		opts = opts.Update(WithTransport(NewRpcTransport(net.NewTCP4Network(), enc.Gob)))
+	}
+
+	socket, err := opts.Transport.Listen(addr)
 	if err != nil {
 		return
 	}
-	ctx.Control().Defer(func(cause error) {
-		listener.Close()
+	ctx.Control().Defer(func(error) {
+		socket.Close()
 	})
 
-	replica, err := newReplica(ctx, opts.LogStorage, opts.PeerStorage, listener.Address().String(), opts)
+	replica, err := newReplica(ctx, opts.LogStorage, opts.PeerStorage, socket.Addr(), opts)
 	if err != nil {
 		return
 	}
-	ctx.Control().Defer(func(cause error) {
-		replica.Close()
-	})
-
-	server, err := newServer(ctx, replica, listener)
-	if err != nil {
-		return
-	}
-	ctx.Control().Defer(func(cause error) {
-		server.Close()
-	})
 
 	pool := newLeaderPool(replica, opts.MaxConns)
 	ctx.Control().Defer(func(cause error) {
@@ -98,7 +90,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		ctrl:       ctx.Control(),
 		logger:     ctx.Logger(),
 		replica:    replica,
-		server:     server,
+		server:     newServer(ctx, replica, socket, opts),
 		leaderPool: pool,
 		sync:       sync,
 	}
@@ -168,7 +160,7 @@ func (h *host) tryJoin(addrs []string) error {
 	errs := []error{}
 	for i := 0; i < 5; i++ {
 		for j := 0; j < len(addrs); j++ {
-			cl, err := dialRpcClient(addrs[j], h.replica.Options)
+			cl, err := h.replica.Options.Transport.Dial(addrs[j], h.replica.Options.Timeouts())
 			if err != nil {
 				h.ctx.Logger().Info("Unable to dial client [%v]: %v", addrs[j], err)
 				errs = append(errs, err)
@@ -220,7 +212,7 @@ func (h *host) tryJoin(addrs []string) error {
 				}
 			}
 
-			if err = cl.UpdateRoster(h.replica.Self, true); err != nil {
+			if err = cl.UpdateRoster(RosterUpdateRequest{h.replica.Self, true}); err != nil {
 				cl.Close()
 				errs = append(errs, errors.Wrapf(err, "Error updating roster [%v]", leader))
 				continue
@@ -255,7 +247,7 @@ func (h *host) tryLeave() error {
 			continue
 		}
 
-		if err := cl.UpdateRoster(h.replica.Self, false); err != nil {
+		if err := cl.UpdateRoster(RosterUpdateRequest{h.replica.Self, false}); err != nil {
 			h.ctx.Logger().Info("Error updating roster [%v]: %v", leader.Addr, err)
 
 			cl.Close()
@@ -280,7 +272,7 @@ func (h *host) tryLeave() error {
 func newLeaderPool(self *replica, size int) pool.ObjectPool {
 	return pool.NewObjectPool(self.Ctx.Control(), size,
 		func() (ret io.Closer, err error) {
-			var cl *rpcClient
+			var cl Client
 			for cl == nil {
 				leader := self.Leader()
 				if leader == nil {
@@ -307,7 +299,7 @@ type logClient struct {
 	ctx        context.Context
 	ctrl       context.Control
 	logger     context.Logger
-	leaderPool pool.ObjectPool // T: *rpcClient
+	leaderPool pool.ObjectPool // T: Client
 	self       *replica
 }
 
@@ -359,7 +351,7 @@ func (c *logClient) Append(cancel <-chan struct{}, payload []byte) (entry Entry,
 		}
 
 		// FIXME: Implement exponential backoff
-		resp, e := raw.(*rpcClient).Append(appendEventRequest{payload, Std})
+		resp, e := raw.(Client).Append(AppendEventRequest{payload, Std})
 		if e != nil {
 			c.leaderPool.Fail(raw)
 			continue

@@ -94,6 +94,6 @@ func (p Peer) ClientPool(ctrl context.Control, opts Options) pool.ObjectPool {
 	})
 }
 
-func (p Peer) Dial(opts Options) (*rpcClient, error) {
-	return dialRpcClient(p.Addr, opts)
+func (p Peer) Dial(opts Options) (Client, error) {
+	return opts.Transport.Dial(p.Addr, opts.Timeouts())
 }
