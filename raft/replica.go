@@ -102,10 +102,6 @@ func newReplica(ctx context.Context, store LogStorage, termStore PeerStorage, ad
 		roster.Close()
 	})
 
-	ctx.Control().Defer(func(cause error) {
-		ctx.Logger().Info("Replica closed: %v", cause)
-	})
-
 	rndmElectionTimeout := time.Duration(int64(rand.Intn(1000000000)))
 	r := &replica{
 		Ctx:                  ctx,

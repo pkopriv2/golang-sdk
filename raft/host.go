@@ -85,6 +85,16 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		sync.Close()
 	})
 
+	// We need to forcefully close the host if the replica
+	// closed
+	go func() {
+		select {
+		case <-ctx.Control().Closed():
+		case <-replica.ctrl.Closed():
+			ctx.Close()
+		}
+	}()
+
 	h = &host{
 		ctx:        ctx,
 		ctrl:       ctx.Control(),

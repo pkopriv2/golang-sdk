@@ -106,6 +106,28 @@ func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+func TestHost_Cluster_ConvergeManyPeers(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, LogLevel)
+	defer ctx.Close()
+
+	cluster, err := StartTestCluster(ctx, 7)
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	timer := context.NewTimer(ctx.Control(), 10*time.Second)
+	defer timer.Close()
+
+	host, err := ElectLeader(timer.Closed(), cluster)
+	assert.Nil(t, err)
+	assert.NotNil(t, host)
+
+	err = SyncAll(timer.Closed(), cluster, func(h Host) bool {
+		return h.Roster().Equals(toPeers(cluster))
+	})
+	assert.Nil(t, err)
+}
+
 func TestHost_Cluster_LeaderLeave(t *testing.T) {
 	ctx := context.NewContext(os.Stdout, LogLevel)
 	defer func() {

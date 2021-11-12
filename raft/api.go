@@ -136,19 +136,19 @@ var (
 
 // Starts the first member of a raft cluster in the background.
 // The provided address must be routable by external members.
-func StartBackground(addr string, fns ...Option) (Host, error) {
-	return Start(context.NewContext(os.Stdout, context.Off), addr, fns...)
+func StartBackground(addr string, o ...Option) (Host, error) {
+	return Start(context.NewContext(os.Stdout, context.Off), addr, o...)
 }
 
 // Joins a new peer to the existing raft cluster in the background.
 // The provided address must be routable by external members.
-func JoinBackground(addr string, peers []string, fns ...Option) (Host, error) {
-	return Join(context.NewContext(os.Stdout, context.Off), addr, peers, fns...)
+func JoinBackground(addr string, peers []string, o ...Option) (Host, error) {
+	return Join(context.NewContext(os.Stdout, context.Off), addr, peers, o...)
 }
 
 // Starts the first member of a raft cluster.  The given addr MUST be routable by external members
-func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
-	host, err := newHost(ctx, addr, buildOptions(fns))
+func Start(ctx context.Context, addr string, o ...Option) (Host, error) {
+	host, err := newHost(ctx, addr, buildOptions(o))
 	if err != nil {
 		return nil, errors.Wrapf(err, "Unable to start cluster [%v]", addr)
 	}
@@ -157,8 +157,8 @@ func Start(ctx context.Context, addr string, fns ...Option) (Host, error) {
 }
 
 // Joins a newly initialized member to an existing raft cluster.
-func Join(ctx context.Context, addr string, peers []string, fns ...Option) (Host, error) {
-	host, err := newHost(ctx, addr, buildOptions(fns))
+func Join(ctx context.Context, addr string, peers []string, o ...Option) (Host, error) {
+	host, err := newHost(ctx, addr, buildOptions(o))
 	if err != nil {
 		return nil, errors.Wrapf(err, "Unable to join cluster [%v]", peers)
 	}
