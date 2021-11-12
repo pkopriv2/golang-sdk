@@ -182,24 +182,20 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 
 	all := c.replica.Cluster()
 	if !update.Join {
-		all = all.Delete(update.Peer)
+		c.logger.Info("Removing peer: %v", update.Peer)
 
-		bytes, err := Config{all}.encode(enc.Json)
+		bytes, err := Config{all.Delete(update.Peer)}.encode(enc.Json)
 		if err != nil {
 			req.Fail(err)
 			return
 		}
 
-		c.logger.Info("Removing peer: %v", update.Peer)
-		if _, err := c.replica.Append(AppendEventRequest{bytes, Conf}); err != nil {
-			req.Fail(err)
-			return
-		}
-
-		c.syncer.handleRosterChange(all)
-		req.Ack(true)
+		_, err = c.replica.Append(AppendEventRequest{bytes, Conf})
+		req.Fail(err)
 		return
 	}
+
+	c.logger.Info("Adding peer [%v]", update.Peer)
 
 	var err error
 	all = all.Add(update.Peer)
@@ -214,7 +210,11 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		}
 	}()
 
-	sync, _ := c.syncer.GetSyncer(update.Peer.Id)
+	sync, ok := c.syncer.GetSyncer(update.Peer.Id)
+	if !ok {
+		req.Fail(errors.Wrapf(ErrInvalid, "Failed to start peer syncer [%v]", update.Peer))
+		return
+	}
 	defer func() {
 		if err != nil {
 			sync.Close() // this really isn't necessary, but shouldn't hurt
@@ -244,14 +244,8 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		return
 	}
 
-	c.logger.Info("Joining peer [%v]", update.Peer)
-	if _, e := c.replica.Append(AppendEventRequest{bytes, Conf}); e != nil {
-		req.Fail(e)
-		return
-	} else {
-		req.Ack(true)
-		return
-	}
+	_, err = c.replica.Append(AppendEventRequest{bytes, Conf})
+	req.Fail(err)
 }
 
 func (c *leader) handleRequestVote(req *chans.Request) {

@@ -250,7 +250,7 @@ func TestHost_Cluster_Append_Concurrent(t *testing.T) {
 					return
 				}
 
-				fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v ms", count.Inc(), time.Now().Sub(before).Milliseconds()))
+				fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v ms", count.Inc(), time.Now().Sub(before)))
 			}
 
 			watermarks <- last

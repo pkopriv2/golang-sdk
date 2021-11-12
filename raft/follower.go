@@ -251,9 +251,5 @@ func (c *follower) handleReplication(req *chans.Request) {
 		return
 	}
 
-	if repl.Commit <= repl.Items[len(repl.Items)-1].Index {
-		c.replica.Log.Commit(repl.Commit)
-	}
-
 	req.Ack(ReplicateResponse{Term: repl.Term, Success: true})
 }
