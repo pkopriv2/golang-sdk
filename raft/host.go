@@ -192,6 +192,7 @@ func (h *host) tryJoin(addrs []string) error {
 					return ErrClosed
 				case <-timer:
 				}
+
 				errs = append(errs, errors.Wrapf(ErrNoLeader, "No leader according to [%v]", status.Self))
 				continue
 			}

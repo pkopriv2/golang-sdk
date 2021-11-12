@@ -58,7 +58,7 @@ func (o Options) Timeouts() (ret Timeouts) {
 	}
 }
 
-func buildOptions(fns ...Option) (ret Options) {
+func buildOptions(fns []Option) (ret Options) {
 	ret = Options{
 		DialTimeout:     30 * time.Second,
 		ReadTimeout:     30 * time.Second,

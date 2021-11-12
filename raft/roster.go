@@ -60,82 +60,62 @@ func listenRosterChanges(r *replica) {
 }
 
 func (r *rosterManager) start() {
+	peers, maxIdx, err := r.reloadLatestConfig()
+	if err != nil {
+		r.self.ctrl.Fail(err)
+		return
+	}
+
+	r.self.Roster.Set(peers)
 	go func() {
+		ctrl := r.self.ctrl.Sub()
 		defer r.logger.Info("Shutting down")
 
 		for {
 			r.logger.Info("Rebuilding roster")
 
-			peers, max, err := r.reloadRosterFromSnapshot()
+			l, err := r.self.Log.ListenCommits(maxIdx+1, 0)
 			if err != nil {
 				r.self.ctrl.Fail(err)
 				return
 			}
+			defer l.Close()
 
-			r.self.Roster.Set(peers)
-
-			appends, err := r.listenAppends(max + 1)
-			if err != nil {
-				r.self.ctrl.Fail(err)
-				return
-			}
-			defer appends.Close()
-
-			commits, err := r.listenCommits(max + 1)
-			if err != nil {
-				r.self.ctrl.Fail(err)
-				return
-			}
-			defer commits.Close()
-
-			ctrl := r.self.ctrl.Sub()
-			go func() {
-				defer ctrl.Close()
-
-				l := newConfigListener(appends, ctrl)
-				for {
-					var config Config
-					select {
-					case <-ctrl.Closed():
-						return
-					case <-l.Ctrl().Closed():
-						return
-					case config = <-l.Data():
-					}
-
-					r.logger.Info("Updating roster: %v", config.Peers)
-					r.self.Roster.Set(config.Peers)
+			for member := false; ; {
+				var entry Entry
+				select {
+				case <-ctrl.Closed():
+					return
+				case <-l.Ctrl().Closed():
+					return
+				case entry = <-l.Data():
 				}
-			}()
 
-			go func() {
-				defer ctrl.Close()
-
-				l := newConfigListener(commits, ctrl)
-
-				// FIXME: Must play log out to make sure we aren't re-added!
-				for member := false; ; {
-					var config Config
-					select {
-					case <-ctrl.Closed():
-						return
-					case <-l.Ctrl().Closed():
-						return
-					case config = <-l.Data():
-					}
-
-					if config.Peers.Contains(r.self.Self) {
-						member = true
-					}
-
-					if member && !config.Peers.Contains(r.self.Self) {
-						r.logger.Info("No longer a member of the cluster [%v]", peers)
-						r.self.ctrl.Close()
-						ctrl.Close()
-						return
-					}
+				// Only worry about config changes
+				if entry.Kind != Conf {
+					continue
 				}
-			}()
+
+				config, err := entry.ParseConfig(enc.Json)
+				if err != nil {
+					r.self.ctrl.Fail(errors.Wrapf(err, "Unable to parse config at index [%v]", entry.Index))
+					return
+				}
+
+				r.logger.Info("Detected config update: %v", config.Peers)
+				if config.Peers.Contains(r.self.Self) {
+					member = true
+				}
+
+				// update the roster.
+				r.self.Roster.Set(config.Peers)
+				if member && !config.Peers.Contains(r.self.Self) {
+					r.logger.Info("No longer a member of the cluster [%v]", peers)
+					r.self.ctrl.Close()
+					ctrl.Close()
+					return
+				}
+			}
 
 			select {
 			case <-r.self.ctrl.Closed():
@@ -150,89 +130,61 @@ func (r *rosterManager) start() {
 	}()
 }
 
-func (r *rosterManager) reloadRosterFromSnapshot() ([]Peer, int64, error) {
+//func (r *rosterManager) reloadRosterFromSnapshot() (Peers, int64, error) {
+//snapshot, err := r.self.Log.Snapshot()
+//if err != nil {
+//return nil, 0, errors.Wrapf(err, "Error getting snapshot")
+//}
+
+//return snapshot.Config().Peers, snapshot.LastIndex(), nil
+//}
+
+func (r *rosterManager) reloadLatestConfig() (ret Peers, maxIdx int64, err error) {
+	// Look to the snapshot for the log minimum.  This will also serve as a
+	// last ditch place to find the config.
 	snapshot, err := r.self.Log.Snapshot()
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "Error getting snapshot")
+		return
 	}
+	ret = snapshot.Config().Peers
 
-	return snapshot.Config().Peers, snapshot.LastIndex(), nil
-}
-
-func (r *rosterManager) listenAppends(offset int64) (Listener, error) {
-	r.logger.Info("Listening to appends from offset [%v]", offset)
-
-	l, err := r.self.Log.ListenAppends(offset, 0)
+	maxIdx, _, err = r.self.Log.LastIndexAndTerm() // might return minIdx
 	if err != nil {
-		return nil, errors.Wrapf(err, "Error registering listener at offset [%v]", offset)
+		return
 	}
 
-	return l, nil
-}
-
-func (r *rosterManager) listenCommits(offset int64) (Listener, error) {
-	r.logger.Info("Listening to commits from offset [%v]", offset)
-
-	l, err := r.self.Log.ListenCommits(offset, 0)
-	if err != nil {
-		return nil, errors.Wrapf(err, "Error registering listener at offset [%v]", offset)
+	minIdx := snapshot.LastIndex()
+	if maxIdx <= minIdx {
+		return
 	}
 
-	return l, nil
-}
+	// Start reading the log backwards until we find an entry
+	for end := maxIdx + 1; end > minIdx; {
+		beg := max(end-256, minIdx)
 
-type configListener struct {
-	raw  Listener
-	ctrl context.Control
-	ch   chan Config
-}
+		batch, e := r.self.Log.Scan(beg, end)
+		if e != nil {
+			err = e
+			return
+		}
 
-func newConfigListener(raw Listener, ctrl context.Control) *configListener {
-	l := &configListener{raw, ctrl, make(chan Config)}
-	l.start()
-	return l
-}
-
-func (c *configListener) Close() error {
-	return c.ctrl.Close()
-}
-
-func (c *configListener) Ctrl() context.Control {
-	return c.ctrl
-}
-
-func (c *configListener) Data() <-chan Config {
-	return c.ch
-}
-
-func (p *configListener) start() {
-	go func() {
-		for {
-			var next Entry
-			select {
-			case <-p.ctrl.Closed():
-				return
-			case <-p.raw.Ctrl().Closed():
-				p.ctrl.Fail(errors.WithStack(p.raw.Ctrl().Failure()))
-				return
-			case next = <-p.raw.Data():
-			}
-
-			if next.Kind != Conf {
+		for i := len(batch) - 1; i > 0; i-- {
+			if batch[i].Kind != Conf {
 				continue
 			}
 
-			config, err := next.ParseConfig(enc.Json)
-			if err != nil {
-				p.ctrl.Fail(errors.WithStack(err))
+			conf, e := batch[i].ParseConfig(enc.Json)
+			if e != nil {
+				err = e
 				return
 			}
 
-			select {
-			case <-p.ctrl.Closed():
-				return
-			case p.ch <- config:
-			}
+			ret = conf.Peers
+			return
 		}
-	}()
+
+		end = beg
+	}
+
+	return
 }

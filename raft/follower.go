@@ -131,7 +131,7 @@ func (c *follower) handleInstallSnapshotSegment(req *chans.Request) {
 func (c *follower) handleRequestVote(req *chans.Request) {
 	vote := req.Body().(VoteRequest)
 
-	c.logger.Debug("Handling request vote [%v]", vote)
+	c.logger.Debug("Handling request vote [term=%v,peer=%v]", vote.Term, vote.Id.String()[:8])
 
 	// previous term vote.  (immediately decline.)
 	if vote.Term < c.term.Epoch {
@@ -249,6 +249,10 @@ func (c *follower) handleReplication(req *chans.Request) {
 	if err := c.replica.Log.Insert(repl.Items); err != nil {
 		req.Fail(err)
 		return
+	}
+
+	if repl.Commit <= repl.Items[len(repl.Items)-1].Index {
+		c.replica.Log.Commit(repl.Commit)
 	}
 
 	req.Ack(ReplicateResponse{Term: repl.Term, Success: true})

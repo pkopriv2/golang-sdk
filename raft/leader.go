@@ -50,6 +50,8 @@ func becomeLeader(replica *replica) {
 
 	logSyncer := newLogSyncer(ctx, replica)
 	ctx.Control().Defer(func(error) {
+		// We need a last effort attempt at committing any pending logs before we shutdown
+		tryBroadCastHeartbeat(logSyncer.Syncers(), nil)
 		logSyncer.Close()
 	})
 
@@ -181,33 +183,30 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	all := c.replica.Cluster()
 	if !update.Join {
 		all = all.Delete(update.Peer)
-		c.replica.Roster.Set(all)
-		c.syncer.handleRosterChange(all) // what should we do if the append to the log fails?
 
 		bytes, err := Config{all}.encode(enc.Json)
 		if err != nil {
+			req.Fail(err)
 			return
 		}
 
 		c.logger.Info("Removing peer: %v", update.Peer)
-		if _, e := c.replica.Append(AppendEventRequest{bytes, Conf}); e != nil {
-			req.Fail(e)
-			return
-		} else {
-			req.Ack(true)
+		if _, err := c.replica.Append(AppendEventRequest{bytes, Conf}); err != nil {
+			req.Fail(err)
 			return
 		}
+
+		c.syncer.handleRosterChange(all)
+		req.Ack(true)
+		return
 	}
 
 	var err error
 	all = all.Add(update.Peer)
-	c.replica.Roster.Set(all)
-	defer func() {
-		if err != nil {
-			c.replica.Roster.Set(all.Delete(update.Peer))
-		}
-	}()
 
+	// Speculatively add the host to start syncing.  This isn't completely safe
+	// because there is a routine that is checking for changes to the roster
+	// and then creating and removing syncers.
 	c.syncer.handleRosterChange(all)
 	defer func() {
 		if err != nil {
@@ -215,7 +214,7 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		}
 	}()
 
-	sync := c.syncer.GetSyncer(update.Peer.Id)
+	sync, _ := c.syncer.GetSyncer(update.Peer.Id)
 	defer func() {
 		if err != nil {
 			sync.Close() // this really isn't necessary, but shouldn't hurt
@@ -258,7 +257,7 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 func (c *leader) handleRequestVote(req *chans.Request) {
 	vote := req.Body().(VoteRequest)
 
-	c.logger.Debug("Handling request vote: %v", vote)
+	c.logger.Debug("Handling request vote [term=%v,peer=%v]", vote.Term, vote.Id.String()[:8])
 
 	// previous or current term vote.  (immediately decline.  already leader)
 	if vote.Term <= c.term.Epoch {
@@ -272,7 +271,7 @@ func (c *leader) handleRequestVote(req *chans.Request) {
 		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 		c.replica.SetTerm(vote.Term, nil, nil)
 		c.ctrl.Close()
-		becomeFollower(c.replica)
+		becomeCandidate(c.replica)
 		return
 	}
 
@@ -466,8 +465,8 @@ func (s *logSyncer) Append(cancel <-chan struct{}, req AppendEventRequest) (entr
 				continue
 			}
 
-			syncer := s.GetSyncer(p.Id)
-			if syncer == nil {
+			syncer, ok := s.GetSyncer(p.Id)
+			if !ok {
 				continue
 			}
 
@@ -496,10 +495,11 @@ func (s *logSyncer) Append(cancel <-chan struct{}, req AppendEventRequest) (entr
 	return
 }
 
-func (s *logSyncer) GetSyncer(id uuid.UUID) *peerSyncer {
+func (s *logSyncer) GetSyncer(id uuid.UUID) (ret *peerSyncer, ok bool) {
 	s.syncersLock.Lock()
 	defer s.syncersLock.Unlock()
-	return s.syncers[id]
+	ret, ok = s.syncers[id]
+	return
 }
 
 func (s *logSyncer) Syncers() map[uuid.UUID]*peerSyncer {
@@ -827,4 +827,28 @@ func (l *peerSyncer) sendSnapshot(cl *Client, snapshot DurableSnapshot) error {
 	}
 
 	return nil
+}
+
+func tryBroadCastHeartbeat(syncers map[uuid.UUID]*peerSyncer, cancel <-chan struct{}) (ok bool) {
+	ch := make(chan ReplicateResponse, len(syncers))
+	for _, p := range syncers {
+		go func(p *peerSyncer) {
+			resp, err := p.Heartbeat(cancel)
+			if err != nil {
+				ch <- ReplicateResponse{Term: -1, Success: false}
+			} else {
+				ch <- resp
+			}
+		}(p)
+	}
+
+	for i := 0; i < majority(len(syncers))-1; {
+		select {
+		case <-cancel:
+			return
+		case <-ch:
+			i++
+		}
+	}
+	return true
 }

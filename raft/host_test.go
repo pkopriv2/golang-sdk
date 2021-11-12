@@ -76,8 +76,12 @@ func TestHost_Cluster_ConvergeThreePeers(t *testing.T) {
 
 	host, err := ElectLeader(timer.Closed(), cluster)
 	assert.Nil(t, err)
-
 	assert.NotNil(t, host)
+
+	err = SyncAll(timer.Closed(), cluster, func(h Host) bool {
+		return h.Roster().Equals(toPeers(cluster))
+	})
+	assert.Nil(t, err)
 }
 
 func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
@@ -94,8 +98,42 @@ func TestHost_Cluster_ConvergeFivePeers(t *testing.T) {
 
 	host, err := ElectLeader(timer.Closed(), cluster)
 	assert.Nil(t, err)
-
 	assert.NotNil(t, host)
+
+	err = SyncAll(timer.Closed(), cluster, func(h Host) bool {
+		return h.Roster().Equals(toPeers(cluster))
+	})
+	assert.Nil(t, err)
+}
+
+func TestHost_Cluster_LeaderLeave(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, LogLevel)
+	defer func() {
+		ctx.Close()
+	}()
+
+	cluster, err := StartTestCluster(ctx, 3)
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	timer := context.NewTimer(ctx.Control(), 60*time.Second)
+	defer timer.Close()
+
+	leader, err := ElectLeader(timer.Closed(), cluster)
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	err = SyncAll(timer.Closed(), cluster, func(h Host) bool {
+		return h.Roster().Equals(toPeers(cluster))
+	})
+	if !assert.Nil(t, err) {
+		return
+	}
+	if !assert.Nil(t, leader.Close()) {
+		return
+	}
 }
 
 func TestHost_Cluster_Append(t *testing.T) {
