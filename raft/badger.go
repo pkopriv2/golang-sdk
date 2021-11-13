@@ -9,7 +9,15 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-// This contains the badgerdb implementation of a raft storage backend
+// This contains the BadgerDB implementation of a raft storage backend
+// This replaces a previous BoltDB implementation.  However, the bolt
+// implemenation suffered serious performance issues when it came to
+// appending log entries.  Each append would take between 30ms.
+// BoltDB uses a B+ tree which is read-optimized, but not write-
+// optimized.  BadgerDB on the hand uses a LSM under the covers.
+// It provides a good balance of read and write performance.  Appends
+// now take ~100µs. If we find the read performance lacking, we can
+// always add a caching layer.
 var (
 	logPrefix            = bin.String("log")
 	logEntryPrefix       = bin.String("log.entry")

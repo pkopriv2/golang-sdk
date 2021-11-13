@@ -107,7 +107,6 @@
 //
 // [1] https://raft.github.io/raft.pdf
 // [2] http://cs.brown.edu/~mph/HerlihyW90/p463-herlihy.pdf
-//
 package raft
 
 import (
@@ -380,7 +379,11 @@ type DurableLog interface {
 	Snapshot() (DurableSnapshot, error)
 }
 
-// A Snapshot represents a durable snapshot with its associated events
+// A Snapshot represents the log up to a certain index.  The
+// snapshots themselves consist of a sequence of events.
+//
+// TODO: Consider using a more generalized structure to allow
+// for arbitrary documents.
 type DurableSnapshot interface {
 	Id() uuid.UUID
 	LastIndex() int64

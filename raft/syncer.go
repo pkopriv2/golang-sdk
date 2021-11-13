@@ -43,18 +43,21 @@ func (s *syncer) Barrier(cancel <-chan struct{}) (val int64, err error) {
 			wait = wait * 2
 		}
 
+		sleep := func() (err error) {
+			timer := time.NewTimer(wait)
+			defer timer.Stop()
+			select {
+			case <-cancel:
+				return ErrCanceled
+			case <-timer.C:
+				return
+			}
+		}
+
 		var raw io.Closer
 		raw, err = s.pool.TakeOrCancel(cancel)
 		if err != nil {
-			timer := time.NewTimer(wait)
-			select {
-			case <-cancel:
-				timer.Stop()
-				return -1, ErrCanceled
-			case <-timer.C:
-				timer.Stop()
-				continue
-			}
+			return
 		}
 
 		var resp ReadBarrierResponse
@@ -62,15 +65,11 @@ func (s *syncer) Barrier(cancel <-chan struct{}) (val int64, err error) {
 		if err != nil {
 			s.pool.Fail(raw)
 
-			timer := time.NewTimer(wait)
-			select {
-			case <-cancel:
-				timer.Stop()
-				return -1, ErrCanceled
-			case <-timer.C:
-				timer.Stop()
-				continue
+			if err := sleep(); err != nil {
+				return -1, err
 			}
+
+			continue
 		}
 
 		val = resp.Barrier

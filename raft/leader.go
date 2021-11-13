@@ -90,13 +90,6 @@ func (l *leader) start() {
 	// Main routine
 	go func() {
 		defer l.ctrl.Close()
-		defer func() {
-			// If the leader is shutting down, it could be because it is leaving the cluster.
-			// We need to do a best effort attempt of propagating any pending commits. If we
-			// do not, the other peers MAY NOT recognize that the leader is gone and will
-			// continue to attempt to connect to it until the config entry is committed.
-			tryBroadCastHeartbeat(l.syncer.Syncers(), l.ctrl.Closed())
-		}()
 
 		timer := time.NewTimer(l.replica.ElectionTimeout / 5)
 		defer timer.Stop()
@@ -106,6 +99,11 @@ func (l *leader) start() {
 			case <-l.ctrl.Closed():
 				return
 			case <-l.replica.ctrl.Closed():
+				// If the leader is shutting down, it could be because it is leaving the cluster.
+				// We need to do a best effort attempt of propagating any pending commits. If we
+				// do not, the other peers MAY NOT recognize that the leader is gone and will
+				// continue to attempt to connect to it until the config entry is committed.
+				tryBroadCastHeartbeat(l.syncer.Syncers(), l.ctrl.Closed())
 				return
 			case req := <-l.replica.AppendRequests:
 				l.handleAppend(req)

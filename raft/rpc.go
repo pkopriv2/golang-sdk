@@ -148,17 +148,6 @@ func (c *RpcClientSession) Close() error {
 	return c.raw.Close()
 }
 
-func (r *RpcClientSession) ReadResponse(ptr interface{}, timeout time.Duration) (err error) {
-	resp, err := r.raw.Read(timeout)
-	if err != nil || !resp.Ok {
-		err = errs.Or(err, resp.Error())
-		return
-	}
-
-	err = resp.Decode(r.enc, ptr)
-	return
-}
-
 func (r *RpcClientSession) SendRequest(val interface{}, timeout time.Duration) (err error) {
 	var fn string
 	switch val.(type) {
@@ -187,4 +176,15 @@ func (r *RpcClientSession) SendRequest(val interface{}, timeout time.Duration) (
 	}
 
 	return r.raw.Send(req, timeout)
+}
+
+func (r *RpcClientSession) ReadResponse(ptr interface{}, timeout time.Duration) (err error) {
+	resp, err := r.raw.Read(timeout)
+	if err != nil || !resp.Ok {
+		err = errs.Or(err, resp.Error())
+		return
+	}
+
+	err = resp.Decode(r.enc, ptr)
+	return
 }
