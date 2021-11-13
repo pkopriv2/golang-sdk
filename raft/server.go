@@ -45,7 +45,7 @@ func (s *server) start(socket Socket) {
 		for {
 			session, err := socket.Accept()
 			if err != nil {
-				s.logger.Error("Error accepting connection: %v", err)
+				s.logger.Debug("Error accepting connection: %v", err)
 				return
 			}
 
@@ -64,7 +64,7 @@ func (s *server) newWorker(session ServerSession) func() {
 			req, err := session.ReadRequest(s.opts.ReadTimeout)
 			if err != nil {
 				if err != io.EOF {
-					s.logger.Error("Error receiving request [%v]: %v", err, session.RemoteAddr())
+					s.logger.Debug("Error receiving request [%v]: %v", err, session.RemoteAddr())
 				}
 				return
 			}

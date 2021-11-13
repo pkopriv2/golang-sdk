@@ -95,7 +95,7 @@ func (l *leader) start() {
 			// We need to do a best effort attempt of propagating any pending commits. If we
 			// do not, the other peers MAY NOT recognize that the leader is gone and will
 			// continue to attempt to connect to it until the config entry is committed.
-			tryBroadCastHeartbeat(l.syncer.Syncers(), nil)
+			tryBroadCastHeartbeat(l.syncer.Syncers(), l.ctrl.Closed())
 		}()
 
 		timer := time.NewTimer(l.replica.ElectionTimeout / 5)
@@ -507,7 +507,10 @@ func newPeerSyncer(ctx context.Context, self *replica, term Term, peer Peer) *pe
 		prevTerm:  -1,
 
 		// We unfortunately can't use the client pool on the replica.  There are cases
-		// where the replica shuts down before
+		// where the replica shuts down before the leader can send out a final heartbeat.
+		// If a leader leaves a cluster of two nodes, the remaining peer would not
+		// be able to make progress in any election because the commit for the config
+		// entry that removed the leader would never happen.
 		pool: peer.ClientPool(sub.Control(), self.Options),
 	}
 
