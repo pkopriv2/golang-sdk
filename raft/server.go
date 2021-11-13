@@ -61,7 +61,7 @@ func (s *server) newWorker(session ServerSession) func() {
 	return func() {
 		defer session.Close()
 		for {
-			req, err := session.Read(s.opts.ReadTimeout)
+			req, err := session.ReadRequest(s.opts.ReadTimeout)
 			if err != nil {
 				if err != io.EOF {
 					s.logger.Error("Error receiving request [%v]: %v", err, session.RemoteAddr())
@@ -93,12 +93,12 @@ func (s *server) newWorker(session ServerSession) func() {
 				resp, err = RosterUpdateResponse{}, s.self.UpdateRoster(r)
 			}
 			if err != nil {
-				if e := session.Send(err, s.opts.SendTimeout); e != nil {
+				if e := session.SendResponse(err, s.opts.SendTimeout); e != nil {
 					s.logger.Error("Error sending response [%v]: %v", e, session.RemoteAddr())
 					return
 				}
 			} else {
-				if e := session.Send(resp, s.opts.SendTimeout); e != nil {
+				if e := session.SendResponse(resp, s.opts.SendTimeout); e != nil {
 					s.logger.Error("Error sending response [%v]: %v", e, session.RemoteAddr())
 					return
 				}

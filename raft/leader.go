@@ -21,9 +21,9 @@ var (
 // This implements the leader state machine and all accompanying services.
 // Because this is steady-state machine, it must implement all of the requests
 // types.  There are cases where clients are making requests that only followers
-// respond.  In those cases, these clients believe the leader is a follower.
-// If the leader is legitimite, it fails these requests, but if it isn't
-// it may become a follower.
+// respond to.  In those cases, these clients believe the leader is a follower.
+// If this leader is legitimate, it continutes on, otherwise it becomes a
+// follower.
 //
 // This also contains the implementations for the log-syncing routine.  That
 // routine manages a set of individual peer syncers, where there is a single
@@ -44,20 +44,13 @@ type leader struct {
 func becomeLeader(replica *replica) {
 	replica.SetTerm(replica.CurrentTerm().Epoch, &replica.Self.Id, &replica.Self.Id)
 
-	ctx := replica.Ctx.Sub("Leader(%v)", replica.CurrentTerm())
+	// We need a new root context so we don't leak defers on the replica's context.
+	// Basically, anything that is part of the leader's lifecycle needs to be its
+	// own isolated object hierarchy.
+	ctx := replica.NewRootContext().Sub("Peer(%v): Leader(%v)", replica.Self, replica.CurrentTerm())
 	ctx.Logger().Info("Becoming leader")
 
 	logSyncer := newLogSyncer(ctx, replica)
-	ctx.Control().Defer(func(error) {
-
-		// If the leader is shutting down, it could be because it is leaving the cluster.
-		// We need to do a best effort attempt of propagating any pending commits.
-		// If we do not, the other peers MAY NOT recognize that the leader is gone
-		// and will continue to attempt to connect to it until the config entry is
-		// committed.
-		tryBroadCastHeartbeat(logSyncer.Syncers(), nil)
-	})
-
 	l := &leader{
 		ctx:      ctx,
 		logger:   ctx.Logger(),
@@ -98,6 +91,11 @@ func (l *leader) start() {
 	go func() {
 		defer l.ctrl.Close()
 		defer func() {
+			// If the leader is shutting down, it could be because it is leaving the cluster.
+			// We need to do a best effort attempt of propagating any pending commits. If we
+			// do not, the other peers MAY NOT recognize that the leader is gone and will
+			// continue to attempt to connect to it until the config entry is committed.
+			tryBroadCastHeartbeat(l.syncer.Syncers(), nil)
 		}()
 
 		timer := time.NewTimer(l.replica.ElectionTimeout / 5)
@@ -316,7 +314,7 @@ type logSyncer struct {
 }
 
 func newLogSyncer(ctx context.Context, self *replica) *logSyncer {
-	ctx = ctx.Sub("Syncer")
+	ctx = ctx.Sub("LogSyncer")
 
 	s := &logSyncer{
 		ctx:     ctx,
@@ -350,13 +348,13 @@ func (s *logSyncer) spawnSyncer(p Peer) *peerSyncer {
 				sleep = 30 * time.Second
 			}
 
+			s.logger.Info("Syncer [%v] closed: %v", p, sync.ctrl.Failure())
 			select {
 			case <-s.ctrl.Closed():
 				return
 			case <-time.After(sleep):
 			}
 
-			s.logger.Info("Syncer [%v] closed: %v", p, sync.ctrl.Failure())
 			s.handleRosterChange(s.self.Cluster())
 			return
 		case <-s.ctrl.Closed():
@@ -404,7 +402,7 @@ func (s *logSyncer) start() {
 			if s.ctrl.IsClosed() || !ok {
 				return
 			}
-			s.logger.Info("Detected roster change: %v", peers.Flatten())
+			s.logger.Info("New roster: %v", peers.Flatten())
 			s.handleRosterChange(peers)
 		}
 	}()
@@ -497,7 +495,7 @@ type peerSyncer struct {
 }
 
 func newPeerSyncer(ctx context.Context, self *replica, term Term, peer Peer) *peerSyncer {
-	sub := ctx.Sub("Sync(%v)", peer)
+	sub := ctx.Sub("PeerSync(%v)", peer)
 
 	sync := &peerSyncer{
 		logger:    sub.Logger(),
@@ -507,8 +505,12 @@ func newPeerSyncer(ctx context.Context, self *replica, term Term, peer Peer) *pe
 		term:      term,
 		prevIndex: -1,
 		prevTerm:  -1,
-		pool:      peer.ClientPool(sub.Control(), self.Options), // TODO: reuse replica's pool
+
+		// We unfortunately can't use the client pool on the replica.  There are cases
+		// where the replica shuts down before
+		pool: peer.ClientPool(sub.Control(), self.Options),
 	}
+
 	sync.start()
 	return sync
 }
@@ -559,7 +561,6 @@ func (s *peerSyncer) Heartbeat(cancel <-chan struct{}) (resp ReplicateResponse, 
 func (s *peerSyncer) start() {
 	s.logger.Info("Starting")
 	go func() {
-		defer s.ctrl.Close()
 		defer s.logger.Info("Shutting down")
 
 		prev, err := s.getLatestLocalEntry() // is there a better way to initialize this??
@@ -580,7 +581,7 @@ func (s *peerSyncer) start() {
 					return
 				}
 
-				s.logger.Debug("Position [%v/%v]", prev.Index, next)
+				s.logger.Debug("Lag [%v]", next-prev.Index)
 
 				cl, err := s.pool.TakeOrCancel(s.ctrl.Closed())
 				if err != nil {

@@ -20,7 +20,7 @@ func newPeer(addr string) Peer {
 }
 
 func (p Peer) ClientPool(ctrl context.Control, opts Options) pool.ObjectPool {
-	return pool.NewObjectPool(ctrl, opts.MaxPeerConns, func() (io.Closer, error) {
+	return pool.NewObjectPool(ctrl, opts.MaxConnsPerPeer, func() (io.Closer, error) {
 		return p.Dial(opts)
 	})
 }

@@ -25,7 +25,10 @@ func becomeCandidate(replica *replica) {
 	// increment term and vote for self.
 	replica.SetTerm(replica.CurrentTerm().Epoch+1, nil, &replica.Self.Id)
 
-	ctx := replica.Ctx.Sub("Candidate(%v)", replica.CurrentTerm())
+	// We need a new root context so we don't leak defers on the replica's context.
+	// Basically, anything that is part of the leader's lifecycle needs to be its
+	// own isolated object hierarchy.
+	ctx := replica.NewRootContext().Sub("Peer(%v): Candidate(%v)", replica.Self, replica.CurrentTerm())
 	ctx.Logger().Info("Becoming candidate")
 
 	l := &candidate{
@@ -62,6 +65,8 @@ func (c *candidate) start() {
 				MaxLogTerm:  maxTerm,
 			})
 	})
+
+	// We want to block any transition until the ballots have all been received.
 	c.ctrl.Defer(func(error) {
 		wg.Wait()
 	})
@@ -86,7 +91,7 @@ func (c *candidate) start() {
 				c.logger.Info("Acquired majority [%v] votes.", needed)
 				c.replica.SetTerm(c.replica.term.Epoch, &c.replica.Self.Id, &c.replica.Self.Id)
 				becomeLeader(c.replica)
-				c.ctrl.Close() // this is the one case where this is ok...need to send heartbeat immediately
+				c.ctrl.Close() // this is the one case where it's okay to close after transitioning...need to send heartbeat immediately
 				return
 			}
 
@@ -108,7 +113,7 @@ func (c *candidate) start() {
 			case <-timer.C:
 				c.logger.Info("Unable to acquire necessary votes [%v/%v]", numVotes, needed)
 				c.ctrl.Close()
-				becomeCandidate(c.replica)
+				becomeFollower(c.replica)
 				return
 			case resp := <-ballots:
 				if resp.Err != nil {
@@ -161,6 +166,8 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 		return
 	}
 
+	// If the voting peer's log is at least as new as this
+	// candidates log, then we will give our vote.
 	maxIndex, maxTerm, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {
 		req.Fail(err)
@@ -169,18 +176,18 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 
 	if vote.MaxLogTerm >= maxTerm && vote.MaxLogIndex >= maxIndex {
 		c.logger.Debug("Voting for candidate [%v]", vote.Id.String()[:8])
-		req.Ack(VoteResponse{Term: vote.Term, Granted: true}) // should this go after the control has been closed??
 		c.replica.SetTerm(vote.Term, nil, &vote.Id)
 		c.ctrl.Close()
 		becomeFollower(c.replica)
+		req.Ack(VoteResponse{Term: vote.Term, Granted: true}) // should this go after the control has been closed??
 		return
 	}
 
 	c.logger.Debug("Rejecting candidate vote [%v]", vote.Id.String())
-	req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 	c.replica.SetTerm(vote.Term, nil, nil)
 	c.ctrl.Close()
 	becomeFollower(c.replica)
+	req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 }
 
 func (c *candidate) handleReplication(req *chans.Request) {
@@ -190,6 +197,11 @@ func (c *candidate) handleReplication(req *chans.Request) {
 		return
 	}
 
+	// We're going to do a simple optimized agreement.  We fail
+	// but hint at what the proper log entry should look like.
+	// The new leader should take the hint and seek to that
+	// index to start replication.  By that time we'll be a
+	// follower.
 	max, _, err := c.replica.Log.LastIndexAndTerm()
 	if err != nil {
 		req.Fail(err)
@@ -197,8 +209,9 @@ func (c *candidate) handleReplication(req *chans.Request) {
 	}
 
 	// repl.term is >= term.  use it from now on.
-	req.Ack(ReplicateResponse{Term: repl.Term, Success: false, Hint: max})
+	c.logger.Info("Detected new leader [%v]", repl.LeaderId.String()[:8])
 	c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
 	c.ctrl.Close()
 	becomeFollower(c.replica)
+	req.Ack(ReplicateResponse{Term: repl.Term, Success: false, Hint: max})
 }

@@ -28,49 +28,49 @@ func (c *Client) Close() error {
 
 func (c *Client) Barrier() (ret ReadBarrierResponse, err error) {
 	err = errs.Or(
-		c.conn.Send(ReadBarrierRequest{}, c.opts.SendTimeout),
-		c.conn.Read(&ret, c.opts.ReadTimeout))
+		c.conn.SendRequest(ReadBarrierRequest{}, c.opts.SendTimeout),
+		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
 	return
 }
 
 func (c *Client) Status() (ret StatusResponse, err error) {
 	err = errs.Or(
-		c.conn.Send(StatusRequest{}, c.opts.SendTimeout),
-		c.conn.Read(&ret, c.opts.ReadTimeout))
+		c.conn.SendRequest(StatusRequest{}, c.opts.SendTimeout),
+		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
 	return
 }
 
 func (c *Client) RequestVote(req VoteRequest) (ret VoteResponse, err error) {
 	err = errs.Or(
-		c.conn.Send(req, c.opts.SendTimeout),
-		c.conn.Read(&ret, c.opts.ReadTimeout))
+		c.conn.SendRequest(req, c.opts.SendTimeout),
+		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
 	return
 }
 
 func (c *Client) UpdateRoster(req RosterUpdateRequest) error {
 	var resp RosterUpdateResponse
 	return errs.Or(
-		c.conn.Send(req, c.opts.SendTimeout),
-		c.conn.Read(&resp, c.opts.ReadTimeout))
+		c.conn.SendRequest(req, c.opts.SendTimeout),
+		c.conn.ReadResponse(&resp, c.opts.ReadTimeout))
 }
 
 func (c *Client) Replicate(req ReplicateRequest) (ret ReplicateResponse, err error) {
 	err = errs.Or(
-		c.conn.Send(req, c.opts.SendTimeout),
-		c.conn.Read(&ret, c.opts.ReadTimeout))
+		c.conn.SendRequest(req, c.opts.SendTimeout),
+		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
 	return
 }
 
 func (c *Client) Append(req AppendRequest) (ret AppendResponse, err error) {
 	err = errs.Or(
-		c.conn.Send(req, c.opts.SendTimeout),
-		c.conn.Read(&ret, c.opts.ReadTimeout))
+		c.conn.SendRequest(req, c.opts.SendTimeout),
+		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
 	return
 }
 
 func (c *Client) InstallSnapshotSegment(req InstallSnapshotRequest) (ret InstallSnapshotResponse, err error) {
 	err = errs.Or(
-		c.conn.Send(req, c.opts.SendTimeout),
-		c.conn.Read(&ret, c.opts.ReadTimeout))
+		c.conn.SendRequest(req, c.opts.SendTimeout),
+		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
 	return
 }

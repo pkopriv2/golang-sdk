@@ -52,6 +52,8 @@ func (l LogLevel) String() string {
 }
 
 type Logger interface {
+	Level() LogLevel
+	Out() io.Writer
 	Fmt(string, ...interface{}) Logger
 	Debug(string, ...interface{})
 	Info(string, ...interface{})
@@ -74,6 +76,14 @@ func (l *logger) println(format string, args ...interface{}) {
 		fmt.Sprintf("%v: %v",
 			fmt.Sprintf(l.fmt, l.args...),
 			fmt.Sprintf(format, args...)))
+}
+
+func (l *logger) Level() LogLevel {
+	return l.lvl
+}
+
+func (l *logger) Out() io.Writer {
+	return l.out
 }
 
 func (l *logger) Fmt(format string, args ...interface{}) Logger {

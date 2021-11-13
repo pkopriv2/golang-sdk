@@ -39,7 +39,7 @@ type Options struct {
 	SendTimeout     time.Duration
 	ElectionTimeout time.Duration
 	MaxWorkers      int
-	MaxPeerConns    int
+	MaxConnsPerPeer int
 }
 
 func (o Options) Update(fns ...func(*Options)) (ret Options) {
@@ -65,7 +65,7 @@ func buildOptions(fns []Option) (ret Options) {
 		SendTimeout:     30 * time.Second,
 		ElectionTimeout: 30 * time.Second,
 		MaxWorkers:      10,
-		MaxPeerConns:    10,
+		MaxConnsPerPeer: 10,
 	}
 	for _, fn := range fns {
 		fn(&ret)
@@ -121,8 +121,8 @@ func WithMaxWorkers(num int) Option {
 	}
 }
 
-func WithMaxPeerConns(num int) Option {
+func WithMaxConnsPerPeer(num int) Option {
 	return func(o *Options) {
-		o.MaxPeerConns = num
+		o.MaxConnsPerPeer = num
 	}
 }

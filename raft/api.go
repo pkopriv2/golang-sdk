@@ -439,7 +439,7 @@ type ServerSession interface {
 	//  * AppendRequest
 	//  * InstallSnapshotRequest
 	//
-	Read(time.Duration) (interface{}, error)
+	ReadRequest(time.Duration) (interface{}, error)
 
 	// Sends a response to the client.  Must be one of:
 	//
@@ -453,7 +453,7 @@ type ServerSession interface {
 	//  * AppendResponse
 	//  * InstallSnapshotResponse
 	//
-	Send(interface{}, time.Duration) error
+	SendResponse(interface{}, time.Duration) error
 }
 
 // The core client interface.
@@ -470,7 +470,7 @@ type ClientSession interface {
 	//  * AppendRequest
 	//  * InstallSnapshotRequest
 	//
-	Send(interface{}, time.Duration) error
+	SendRequest(interface{}, time.Duration) error
 
 	// Reads a response from the server.  The input must be one of:
 	//
@@ -482,7 +482,7 @@ type ClientSession interface {
 	//  * *AppendResponse
 	//  * *InstallSnapshotResponse
 	//
-	Read(interface{}, time.Duration) error
+	ReadResponse(interface{}, time.Duration) error
 }
 
 type StatusRequest struct{}

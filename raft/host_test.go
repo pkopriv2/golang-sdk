@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	LogLevel = context.Info
+	LogLevel = context.Error
 )
 
 func TestHost_Close(t *testing.T) {

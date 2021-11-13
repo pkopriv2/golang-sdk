@@ -145,6 +145,10 @@ func (r *replica) start() error {
 	return nil
 }
 
+func (r *replica) NewRootContext() context.Context {
+	return context.NewContext(r.Ctx.Logger().Out(), r.Ctx.Logger().Level())
+}
+
 func (r *replica) String() string {
 	r.lock.RLock()
 	defer r.lock.RUnlock()

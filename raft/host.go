@@ -74,7 +74,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		return
 	}
 
-	pool := newLeaderPool(replica, opts.MaxPeerConns)
+	pool := newLeaderPool(replica, opts.MaxConnsPerPeer)
 	ctx.Control().Defer(func(cause error) {
 		pool.Close()
 	})

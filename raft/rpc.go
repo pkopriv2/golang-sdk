@@ -94,7 +94,7 @@ func (r *RpcServerSession) RemoteAddr() string {
 	return r.raw.RemoteAddr()
 }
 
-func (r *RpcServerSession) Read(timeout time.Duration) (ret interface{}, err error) {
+func (r *RpcServerSession) ReadRequest(timeout time.Duration) (ret interface{}, err error) {
 	req, err := r.raw.Read(timeout)
 	if err != nil {
 		return
@@ -128,7 +128,7 @@ func (r *RpcServerSession) Read(timeout time.Duration) (ret interface{}, err err
 	return
 }
 
-func (r *RpcServerSession) Send(val interface{}, timeout time.Duration) error {
+func (r *RpcServerSession) SendResponse(val interface{}, timeout time.Duration) error {
 	if val == nil {
 		return r.raw.Send(rpc.EmptyResponse, timeout)
 	}
@@ -148,7 +148,7 @@ func (c *RpcClientSession) Close() error {
 	return c.raw.Close()
 }
 
-func (r *RpcClientSession) Read(ptr interface{}, timeout time.Duration) (err error) {
+func (r *RpcClientSession) ReadResponse(ptr interface{}, timeout time.Duration) (err error) {
 	resp, err := r.raw.Read(timeout)
 	if err != nil || !resp.Ok {
 		err = errs.Or(err, resp.Error())
@@ -159,7 +159,7 @@ func (r *RpcClientSession) Read(ptr interface{}, timeout time.Duration) (err err
 	return
 }
 
-func (r *RpcClientSession) Send(val interface{}, timeout time.Duration) (err error) {
+func (r *RpcClientSession) SendRequest(val interface{}, timeout time.Duration) (err error) {
 	var fn string
 	switch val.(type) {
 	default:

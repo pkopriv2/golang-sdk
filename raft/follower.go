@@ -22,7 +22,13 @@ type follower struct {
 }
 
 func becomeFollower(replica *replica) {
-	ctx := replica.Ctx.Sub("Follower(%v)", replica.CurrentTerm())
+
+	// We need a new root context so we don't leak defers on the replica's context.
+	// Basically, anything that is part of the leader's lifecycle needs to be its
+	// own isolated object hierarchy.
+	ctx := replica.NewRootContext().Sub("Peer(%v): Follower(%v)", replica.Self, replica.CurrentTerm())
+	ctx.Logger().Info("Becoming follower")
+
 	l := &follower{
 		ctx:     ctx,
 		logger:  ctx.Logger(),
@@ -41,6 +47,8 @@ func (c *follower) start() {
 			select {
 			case <-c.ctrl.Closed():
 				return
+			case <-c.replica.ctrl.Closed():
+				return
 			case req := <-c.replica.AppendRequests:
 				c.handleAppend(req)
 			case req := <-c.replica.RosterUpdateRequests:
@@ -54,9 +62,6 @@ func (c *follower) start() {
 	// Main routine
 	go func() {
 		defer c.ctrl.Close()
-		c.ctrl.Defer(func(error) {
-			c.logger.Info("Shutting down")
-		})
 
 		timer := time.NewTimer(c.replica.ElectionTimeout)
 		defer timer.Stop()
