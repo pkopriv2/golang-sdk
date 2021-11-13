@@ -1,8 +1,9 @@
 package raft
 
 import (
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"sync"
 	"time"
 
@@ -98,6 +99,11 @@ func newReplica(ctx context.Context, store LogStorage, termStore PeerStorage, ad
 		return nil, errors.Wrapf(err, "Error retrieving durable log [%v]", id)
 	}
 
+	offset, err := rand.Int(rand.Reader, big.NewInt(int64(opts.ElectionTimeout/2)))
+	if err != nil {
+		return nil, errors.Wrapf(err, "Error generating election timeout")
+	}
+
 	r := &replica{
 		Ctx:                  ctx,
 		logger:               ctx.Logger(),
@@ -113,7 +119,7 @@ func newReplica(ctx context.Context, store LogStorage, termStore PeerStorage, ad
 		AppendRequests:       make(chan *chans.Request),
 		SnapshotRequests:     make(chan *chans.Request),
 		RosterUpdateRequests: make(chan *chans.Request),
-		ElectionTimeout:      opts.ElectionTimeout/2 + time.Duration(rand.Int63n(int64(opts.ElectionTimeout/2))),
+		ElectionTimeout:      opts.ElectionTimeout/2 + time.Duration(offset.Int64()),
 		Options:              opts,
 	}
 	return r, r.start()

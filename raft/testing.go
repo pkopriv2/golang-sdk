@@ -13,7 +13,7 @@ func StartTestHost(ctx context.Context) (Host, error) {
 		WithDialTimeout(1*time.Second),
 		WithReadTimeout(1*time.Second),
 		WithSendTimeout(1*time.Second),
-		WithElectionTimeout(100*time.Millisecond))
+		WithElectionTimeout(1*time.Second))
 }
 
 func JoinTestHost(ctx context.Context, peer string) (Host, error) {
@@ -21,7 +21,7 @@ func JoinTestHost(ctx context.Context, peer string) (Host, error) {
 		WithDialTimeout(1*time.Second),
 		WithReadTimeout(1*time.Second),
 		WithSendTimeout(1*time.Second),
-		WithElectionTimeout(100*time.Millisecond))
+		WithElectionTimeout(1*time.Second))
 }
 
 func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
