@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"sync"
 	"time"
 
 	"github.com/pkopriv2/golang-sdk/lang/chans"
@@ -48,7 +49,11 @@ func (c *candidate) start() {
 	}
 
 	c.logger.Debug("Sending ballots: (term=%v,maxIndex=%v,maxTerm=%v)", c.term.Epoch, maxIndex, maxTerm)
+
+	wg := &sync.WaitGroup{}
 	ballots := c.replica.Broadcast(func(cl *Client) (interface{}, error) {
+		wg.Add(1)
+		defer wg.Done()
 		return cl.RequestVote(
 			VoteRequest{
 				Id:          c.replica.Self.Id,
@@ -57,23 +62,31 @@ func (c *candidate) start() {
 				MaxLogTerm:  maxTerm,
 			})
 	})
+	c.ctrl.Defer(func(error) {
+		wg.Wait()
+	})
 
 	// Currently this is essentially a single-threaded implementation.
 	go func() {
 		defer c.ctrl.Close()
+		defer func() {
+			c.logger.Info("Shutting down")
+		}()
 
 		// set the election timer.
-		c.logger.Info("Setting timer [%v]", c.replica.ElectionTimeout)
+		c.logger.Info("Setting election timer [%v]", c.replica.ElectionTimeout)
 		timer := time.NewTimer(c.replica.ElectionTimeout)
+		defer timer.Stop()
 
 		for numVotes := 1; !c.ctrl.IsClosed(); {
-			c.logger.Info("Received [%v/%v] votes", numVotes, len(c.replica.Cluster()))
-
 			needed := c.replica.Majority()
+			c.logger.Info("Received [%v/%v] votes", numVotes, needed)
+
 			if numVotes >= needed {
 				c.logger.Info("Acquired majority [%v] votes.", needed)
 				c.replica.SetTerm(c.replica.term.Epoch, &c.replica.Self.Id, &c.replica.Self.Id)
 				becomeLeader(c.replica)
+				c.ctrl.Close() // this is the one case where this is ok...need to send heartbeat immediately
 				return
 			}
 
@@ -82,6 +95,12 @@ func (c *candidate) start() {
 				return
 			case <-c.replica.ctrl.Closed():
 				return
+			case req := <-c.replica.AppendRequests:
+				c.handleAppend(req)
+			case req := <-c.replica.BarrierRequests:
+				c.handleReadBarrier(req)
+			case req := <-c.replica.RosterUpdateRequests:
+				c.handleRosterUpdate(req)
 			case req := <-c.replica.ReplicationRequests:
 				c.handleReplication(req)
 			case req := <-c.replica.VoteRequests:
@@ -89,7 +108,7 @@ func (c *candidate) start() {
 			case <-timer.C:
 				c.logger.Info("Unable to acquire necessary votes [%v/%v]", numVotes, needed)
 				c.ctrl.Close()
-				becomeFollower(c.replica)
+				becomeCandidate(c.replica)
 				return
 			case resp := <-ballots:
 				if resp.Err != nil {
@@ -99,8 +118,9 @@ func (c *candidate) start() {
 
 				vote := resp.Val.(VoteResponse)
 				if vote.Term > c.term.Epoch {
-					c.replica.SetTerm(vote.Term, nil, nil)
+					c.logger.Info("A later term was detected [%v]", vote.Term)
 					c.ctrl.Close()
+					c.replica.SetTerm(vote.Term, nil, nil)
 					becomeFollower(c.replica)
 					return
 				}
@@ -113,11 +133,23 @@ func (c *candidate) start() {
 	}()
 }
 
+func (c *candidate) handleAppend(req *chans.Request) {
+	req.Fail(ErrNotLeader)
+}
+
+func (c *candidate) handleReadBarrier(req *chans.Request) {
+	req.Fail(ErrNotLeader)
+}
+
+func (c *candidate) handleRosterUpdate(req *chans.Request) {
+	req.Fail(ErrNotLeader)
+}
+
 func (c *candidate) handleRequestVote(req *chans.Request) {
 	vote := req.Body().(VoteRequest)
 
-	c.logger.Debug("Handling vote request: %v", vote)
-	if vote.Term <= c.term.Epoch {
+	c.logger.Debug("Handling vote request [term=%v,peer=%v]", vote.Term, vote.Id.String()[:8])
+	if vote.Term <= c.term.Epoch { // we can only vote once during an election
 		req.Ack(VoteResponse{Term: c.term.Epoch, Granted: false})
 		return
 	}
@@ -126,9 +158,6 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 	_, ok := c.replica.FindPeer(vote.Id)
 	if !ok {
 		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
-		c.replica.SetTerm(vote.Term, nil, nil)
-		c.ctrl.Close()
-		becomeFollower(c.replica)
 		return
 	}
 
@@ -138,18 +167,20 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 		return
 	}
 
-	if vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
-		c.logger.Debug("Voting for candidate [%v]", vote.Id.String())
+	if vote.MaxLogTerm >= maxTerm && vote.MaxLogIndex >= maxIndex {
+		c.logger.Debug("Voting for candidate [%v]", vote.Id.String()[:8])
 		req.Ack(VoteResponse{Term: vote.Term, Granted: true}) // should this go after the control has been closed??
 		c.replica.SetTerm(vote.Term, nil, &vote.Id)
-		becomeFollower(c.replica)
 		c.ctrl.Close()
+		becomeFollower(c.replica)
 		return
 	}
 
 	c.logger.Debug("Rejecting candidate vote [%v]", vote.Id.String())
 	req.Ack(VoteResponse{Term: vote.Term, Granted: false})
 	c.replica.SetTerm(vote.Term, nil, nil)
+	c.ctrl.Close()
+	becomeFollower(c.replica)
 }
 
 func (c *candidate) handleReplication(req *chans.Request) {

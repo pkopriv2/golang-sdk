@@ -46,7 +46,6 @@ func NewObjectPool(ctrl context.Control, max int, fn func() (io.Closer, error)) 
 func (p *objectPool) start() {
 	go func() {
 		var take chan *chans.Request
-		var next io.Closer
 		for out := 0; ; {
 			take = nil
 			if out < p.max {
@@ -55,19 +54,19 @@ func (p *objectPool) start() {
 
 			select {
 			case <-p.ctrl.Closed():
-				if next != nil {
-					next.Close()
-				}
 				return
 			case obj := <-p.ret:
+				p.returnToPool(obj)
 				out--
-				if obj != nil {
-					p.returnToPool(obj)
+			case req := <-take:
+				closer, err := p.takeOrSpawnFromPool()
+				if err != nil {
+					req.Fail(err)
 					continue
 				}
-			case req := <-take:
+
+				req.Ack(closer)
 				out++
-				req.Return(p.takeOrSpawnFromPool())
 			}
 		}
 	}()
@@ -122,10 +121,6 @@ func (p *objectPool) Return(c io.Closer) {
 	}
 }
 
-func (p *objectPool) spawn() (io.Closer, error) {
-	return p.fn()
-}
-
 func (p *objectPool) closePool() (err error) {
 	for item := p.raw.Front(); item != nil; item = p.raw.Front() {
 		val := p.raw.Remove(item)
@@ -135,7 +130,9 @@ func (p *objectPool) closePool() (err error) {
 }
 
 func (p *objectPool) returnToPool(c io.Closer) {
-	p.raw.PushFront(c)
+	if c != nil {
+		p.raw.PushFront(c)
+	}
 }
 
 func (p *objectPool) takeOrSpawnFromPool() (io.Closer, error) {
@@ -143,6 +140,5 @@ func (p *objectPool) takeOrSpawnFromPool() (io.Closer, error) {
 		val := p.raw.Remove(item)
 		return val.(io.Closer), nil
 	}
-
-	return p.spawn()
+	return p.fn()
 }

@@ -116,7 +116,7 @@ func (r *RpcServerSession) Read(timeout time.Duration) (ret interface{}, err err
 	case funcReplicate:
 		ptr = &ReplicateRequest{}
 	case funcAppend:
-		ptr = &AppendEventRequest{}
+		ptr = &AppendRequest{}
 	case funcInstallSnapshot:
 		ptr = &InstallSnapshotRequest{}
 	}
@@ -175,7 +175,7 @@ func (r *RpcClientSession) Send(val interface{}, timeout time.Duration) (err err
 		fn = funcUpdateRoster
 	case ReplicateRequest:
 		fn = funcReplicate
-	case AppendEventRequest:
+	case AppendRequest:
 		fn = funcAppend
 	case InstallSnapshotRequest:
 		fn = funcInstallSnapshot

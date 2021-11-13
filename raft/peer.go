@@ -19,60 +19,63 @@ func newPeer(addr string) Peer {
 	return Peer{Id: uuid.NewV1(), Addr: addr}
 }
 
+func (p Peer) ClientPool(ctrl context.Control, opts Options) pool.ObjectPool {
+	return pool.NewObjectPool(ctrl, opts.MaxPeerConns, func() (io.Closer, error) {
+		return p.Dial(opts)
+	})
+}
+
+func (p Peer) Dial(opts Options) (*Client, error) {
+	return Dial(opts.Transport, p.Addr, opts.Timeouts())
+}
+
 func (p Peer) String() string {
 	return fmt.Sprintf("Peer(%v, %v)", p.Id.String()[:8], p.Addr)
 }
 
 // replicated configuration
-type Peers []Peer
+type Peers map[uuid.UUID]Peer
 
-func (peers Peers) Contains(p Peer) (ok bool) {
-	for _, cur := range peers {
-		if cur.Id == p.Id {
-			ok = true
-			return
-		}
+func NewPeers(peers []Peer) (ret Peers) {
+	ret = make(map[uuid.UUID]Peer)
+	for _, p := range peers {
+		ret[p.Id] = p
 	}
 	return
 }
 
-func SearchPeersById(id uuid.UUID) func(Peer) bool {
-	return func(p Peer) bool {
-		return p.Id == id
+func (peers Peers) Copy() (ret Peers) {
+	ret = make(map[uuid.UUID]Peer)
+	for _, p := range peers {
+		ret[p.Id] = p
 	}
+	return
 }
 
-func (peers Peers) First(fn func(p Peer) bool) *Peer {
-	for _, cur := range peers {
-		if fn(cur) {
-			return &cur
-		}
+func (peers Peers) Flatten() (ret []Peer) {
+	ret = make([]Peer, 0, len(peers))
+	for _, p := range peers {
+		ret = append(ret, p)
 	}
-	return nil
+	return
 }
 
-func (peers Peers) Find(p Peer) int {
-	for i, cur := range peers {
-		if cur.Id == p.Id {
-			return i
-		}
-	}
-	return -1
+func (peers Peers) Contains(p Peer) (ok bool) {
+	_, ok = peers[p.Id]
+	return
 }
 
 func (peers Peers) Add(p Peer) Peers {
 	if peers.Contains(p) {
 		return peers
 	}
-	return append(peers, p)
+	return NewPeers(append(peers.Flatten(), p))
 }
 
 func (peers Peers) Delete(p Peer) Peers {
-	index := peers.Find(p)
-	if index == -1 {
-		return peers
-	}
-	return append(peers[:index], peers[index+1:]...)
+	all := peers.Copy()
+	delete(all, p.Id)
+	return all
 }
 
 func (peers Peers) Equals(o Peers) bool {
@@ -86,14 +89,4 @@ func (peers Peers) Equals(o Peers) bool {
 		}
 	}
 	return true
-}
-
-func (p Peer) ClientPool(ctrl context.Control, opts Options) pool.ObjectPool {
-	return pool.NewObjectPool(ctrl, opts.MaxConns, func() (io.Closer, error) {
-		return p.Dial(opts)
-	})
-}
-
-func (p Peer) Dial(opts Options) (*Client, error) {
-	return Dial(opts.Transport, p.Addr, opts.Timeouts())
 }

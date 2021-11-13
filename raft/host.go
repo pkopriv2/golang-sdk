@@ -9,7 +9,6 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/badgerdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 	uuid "github.com/satori/go.uuid"
@@ -75,7 +74,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		return
 	}
 
-	pool := newLeaderPool(replica, opts.MaxConns)
+	pool := newLeaderPool(replica, opts.MaxPeerConns)
 	ctx.Control().Defer(func(cause error) {
 		pool.Close()
 	})
@@ -85,8 +84,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		sync.Close()
 	})
 
-	// We need to forcefully close the host if the replica
-	// closed
+	// We need to forcefully close the host if the replica closed
 	go func() {
 		select {
 		case <-ctx.Control().Closed():
@@ -160,26 +158,27 @@ func (h *host) join(addrs []string) (err error) {
 }
 
 func (h *host) leave() error {
-	err := h.tryLeave()
+	err := h.tryLeave(nil)
 	h.replica.ctrl.Fail(err)
 	return err
 }
 
 func (h *host) tryJoin(addrs []string) error {
+	logger := h.replica.logger
 
 	errs := []error{}
 	for i := 0; i < 5; i++ {
 		for j := 0; j < len(addrs); j++ {
 			cl, err := Dial(h.replica.Options.Transport, addrs[j], h.replica.Options.Timeouts())
 			if err != nil {
-				h.ctx.Logger().Info("Unable to dial client [%v]: %v", addrs[j], err)
+				logger.Info("Unable to dial client [%v]: %v", addrs[j], err)
 				errs = append(errs, err)
 				continue
 			}
 
 			status, err := cl.Status()
 			if err != nil {
-				h.ctx.Logger().Info("Unable to get status [%v]: %v", addrs[j], err)
+				logger.Info("Unable to get status [%v]: %v", addrs[j], err)
 				cl.Close()
 				errs = append(errs, err)
 				continue
@@ -187,7 +186,7 @@ func (h *host) tryJoin(addrs []string) error {
 
 			h.replica.Roster.Set(status.Config.Peers)
 			if status.Config.Peers.Contains(h.replica.Self) {
-				h.ctx.Logger().Info("Already a member")
+				logger.Info("Already a member")
 				cl.Close()
 				return nil
 			}
@@ -207,8 +206,8 @@ func (h *host) tryJoin(addrs []string) error {
 				continue
 			}
 
-			leader := status.Config.Peers.First(SearchPeersById(*status.Term.LeaderId))
-			if leader == nil {
+			leader, ok := status.Config.Peers[*status.Term.LeaderId]
+			if !ok {
 				errs = append(errs, errors.Wrapf(ErrNoLeader, "Could not locate leader [%v]", status.Term.LeaderId))
 				continue
 			}
@@ -225,59 +224,92 @@ func (h *host) tryJoin(addrs []string) error {
 
 			if err = cl.UpdateRoster(RosterUpdateRequest{h.replica.Self, true}); err != nil {
 				cl.Close()
-				errs = append(errs, errors.Wrapf(err, "Error updating roster [%v]", leader))
+				errs = append(errs, errors.Wrapf(err, "Error joining cluster [%v]", leader))
 				continue
 			}
 
 			return cl.Close()
 		}
 	}
+
 	return fmt.Errorf("Unable to join cluster: %v", errs)
 }
 
-func (h *host) tryLeave() error {
-	for i := 0; i < 5; i++ {
+func (h *host) tryLeave(cancel <-chan struct{}) (err error) {
+	logger := h.replica.logger
+
+	wait := func() error {
+		timer := time.NewTimer(h.replica.Options.ElectionTimeout)
+		defer timer.Stop()
+		select {
+		case <-h.ctrl.Closed():
+			return ErrClosed
+		case <-cancel:
+			return ErrCanceled
+		case <-timer.C:
+			return nil
+		}
+	}
+
+	for i := 0; ; i++ {
+		logger.Info("Attempting to leave cluster [attempt=%v]", i)
+
 		leader := h.replica.Leader()
 		if leader == nil {
-			h.ctx.Logger().Info("Currently there is no leader. Can't leave until one is elected")
+			logger.Info("Currently there is no leader. Can't leave until one is elected")
 
-			timer := time.NewTimer(h.replica.Options.ElectionTimeout)
-			select {
-			case <-h.ctrl.Closed():
-				timer.Stop()
-				return ErrClosed
-			case <-timer.C:
-				timer.Stop()
+			if err := wait(); err != nil {
+				return err
 			}
+
 			continue
 		}
 
 		cl, err := leader.Dial(h.replica.Options)
 		if err != nil {
-			h.ctx.Logger().Info("Error dialing leader [%v]: %v", leader.Addr, err)
+			logger.Info("Error dialing leader [%v]: %v", leader, err)
+
+			if err := wait(); err != nil {
+				return err
+			}
+
 			continue
 		}
 
-		if err := cl.UpdateRoster(RosterUpdateRequest{h.replica.Self, false}); err != nil {
-			h.ctx.Logger().Info("Error updating roster [%v]: %v", leader.Addr, err)
+		status, err := cl.Status()
+		if err != nil {
+			logger.Info("Error retrieving status [%v]: %v", leader, err)
+
+			if err := wait(); err != nil {
+				return err
+			}
 
 			cl.Close()
-			if errs.Is(err, ErrNotLeader) {
-				timer := time.NewTimer(h.replica.Options.ElectionTimeout)
-				select {
-				case <-h.ctrl.Closed():
-					timer.Stop()
-					return ErrClosed
-				case <-timer.C:
-					timer.Stop()
-				}
+			continue
+		}
+
+		if len(status.Config.Peers) == 1 {
+			cl.Close()
+			return nil
+		}
+
+		if !status.Config.Peers.Contains(h.Self()) {
+			cl.Close()
+			return nil
+		}
+
+		if err = cl.UpdateRoster(RosterUpdateRequest{h.replica.Self, false}); err != nil {
+			logger.Info("Error leaving cluster: %v", err)
+			if err := wait(); err != nil {
+				return err
 			}
+
+			cl.Close()
 			continue
 		}
 
 		return cl.Close()
 	}
-	return nil
 }
 
 func newLeaderPool(self *replica, size int) pool.ObjectPool {
@@ -362,7 +394,7 @@ func (c *logClient) Append(cancel <-chan struct{}, payload []byte) (entry Entry,
 		}
 
 		// FIXME: Implement exponential backoff
-		resp, e := raw.(*Client).Append(AppendEventRequest{payload, Std})
+		resp, e := raw.(*Client).Append(AppendRequest{payload, Std})
 		if e != nil {
 			c.leaderPool.Fail(raw)
 			continue

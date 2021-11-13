@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -10,11 +9,19 @@ import (
 )
 
 func StartTestHost(ctx context.Context) (Host, error) {
-	return Start(ctx, ":0", WithElectionTimeout(1*time.Second))
+	return Start(ctx, ":0",
+		WithDialTimeout(1*time.Second),
+		WithReadTimeout(1*time.Second),
+		WithSendTimeout(1*time.Second),
+		WithElectionTimeout(100*time.Millisecond))
 }
 
 func JoinTestHost(ctx context.Context, peer string) (Host, error) {
-	return Join(ctx, ":0", []string{peer}, WithElectionTimeout(1*time.Second))
+	return Join(ctx, ":0", []string{peer},
+		WithDialTimeout(1*time.Second),
+		WithReadTimeout(1*time.Second),
+		WithSendTimeout(1*time.Second),
+		WithElectionTimeout(100*time.Millisecond))
 }
 
 func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
@@ -33,9 +40,6 @@ func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "Error starting first host")
 	}
-	ctx.Control().Defer(func(error) {
-		first.Close()
-	})
 
 	hosts := []Host{first}
 	for i := 1; i < size; i++ {
@@ -45,13 +49,26 @@ func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 		}
 
 		hosts = append(hosts, host)
-		ctx.Control().Defer(func(error) {
-			fmt.Println("Closing: ", host.Self())
-			host.Close()
-		})
 	}
 
 	return hosts, nil
+}
+
+func StopTestCluster(cluster []Host) error {
+	//errs := []error{}
+	for _, h := range cluster {
+		if err := h.Close(); err != nil {
+			return err
+			//errs = append(errs, err)
+		}
+	}
+	return nil
+
+	//if len(errs) == 0 {
+	//return nil
+	//}
+
+	//return fmt.Errorf("Errors stopping cluster: %v", errs)
 }
 
 func ElectLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/pkopriv2/golang-sdk/lang/chans"
+	"github.com/pkopriv2/golang-sdk/lang/concurrent"
 	"github.com/pkopriv2/golang-sdk/lang/context"
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 	uuid "github.com/satori/go.uuid"
 )
@@ -47,8 +47,8 @@ type replica struct {
 	// data lock (currently using very coarse lock)
 	lock sync.RWMutex
 
-	// a leader pool
-	leaderPool pool.ObjectPool
+	// client pools
+	clientPools concurrent.Map
 
 	// the current term.
 	term Term
@@ -87,22 +87,17 @@ func newReplica(ctx context.Context, store LogStorage, termStore PeerStorage, ad
 
 	self := Peer{id, addr}
 	ctx = ctx.Sub("%v", self)
-	ctx.Logger().Info("Starting replica.")
+
+	roster := newRoster(NewPeers([]Peer{self}))
+	ctx.Control().Defer(func(cause error) {
+		roster.Close()
+	})
 
 	log, err := getOrCreateLog(ctx, store, self)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Error retrieving durable log [%v]", id)
 	}
-	ctx.Control().Defer(func(cause error) {
-		log.Close()
-	})
 
-	roster := newRoster([]Peer{self})
-	ctx.Control().Defer(func(cause error) {
-		roster.Close()
-	})
-
-	rndmElectionTimeout := time.Duration(int64(rand.Intn(1000000000)))
 	r := &replica{
 		Ctx:                  ctx,
 		logger:               ctx.Logger(),
@@ -111,13 +106,14 @@ func newReplica(ctx context.Context, store LogStorage, termStore PeerStorage, ad
 		Terms:                termStore,
 		Log:                  log,
 		Roster:               roster,
+		clientPools:          concurrent.NewMap(),
 		BarrierRequests:      make(chan *chans.Request),
 		ReplicationRequests:  make(chan *chans.Request),
 		VoteRequests:         make(chan *chans.Request),
 		AppendRequests:       make(chan *chans.Request),
 		SnapshotRequests:     make(chan *chans.Request),
 		RosterUpdateRequests: make(chan *chans.Request),
-		ElectionTimeout:      opts.ElectionTimeout + rndmElectionTimeout,
+		ElectionTimeout:      opts.ElectionTimeout/2 + time.Duration(rand.Int63n(int64(opts.ElectionTimeout/2))),
 		Options:              opts,
 	}
 	return r, r.start()
@@ -153,7 +149,6 @@ func (r *replica) SetTerm(num int64, leader *uuid.UUID, vote *uuid.UUID) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	r.term = Term{num, leader, vote}
-	r.logger.Info("Updated to term [%v]", r.term)
 	return r.Terms.SetActiveTerm(r.Self.Id, r.term)
 }
 
@@ -180,25 +175,13 @@ func (r *replica) Leader() *Peer {
 	return nil
 }
 
-func (r *replica) FindPeer(id uuid.UUID) (Peer, bool) {
-	for _, p := range r.Cluster() {
-		if p.Id == id {
-			return p, true
-		}
-	}
-	return Peer{}, false
+func (r *replica) FindPeer(id uuid.UUID) (ret Peer, ok bool) {
+	ret, ok = r.Cluster()[id]
+	return
 }
 
-func (r *replica) Others() []Peer {
-	cluster := r.Cluster()
-
-	others := make([]Peer, 0, len(cluster))
-	for _, p := range cluster {
-		if p.Id != r.Self.Id {
-			others = append(others, p)
-		}
-	}
-	return others
+func (r *replica) Others() Peers {
+	return r.Cluster().Delete(r.Self)
 }
 
 func (r *replica) Majority() int {
@@ -211,19 +194,48 @@ type broadCastResponse struct {
 	Val  interface{}
 }
 
+func (r *replica) getClientPool(p Peer) (ret pool.ObjectPool) {
+	raw, ok := r.clientPools.Try(p.Id)
+	if ok {
+		ret = raw.(pool.ObjectPool)
+		return
+	}
+
+	r.clientPools.Update(func(m concurrent.Map) {
+		raw, ok := m.Try(p.Id)
+		if ok {
+			ret = raw.(pool.ObjectPool)
+			return
+		}
+		ret = p.ClientPool(r.ctrl, r.Options)
+		m.Put(p.Id, ret)
+	})
+	return
+}
+
 func (r *replica) Broadcast(fn func(c *Client) (interface{}, error)) <-chan broadCastResponse {
 	peers := r.Others()
+
 	ret := make(chan broadCastResponse, len(peers))
 	for _, p := range peers {
 		go func(p Peer) {
-			cl, err := p.Dial(r.Options)
+			pool := r.getClientPool(p)
+			var err error
+
+			cl, err := pool.TakeOrCancel(r.ctrl.Closed())
 			if err != nil {
 				ret <- broadCastResponse{Peer: p, Err: err}
 				return
 			}
+			defer func() {
+				if err != nil {
+					pool.Fail(cl)
+				} else {
+					pool.Return(cl)
+				}
+			}()
 
-			defer cl.Close()
-			val, err := fn(cl)
+			val, err := fn(cl.(*Client))
 			if err != nil {
 				ret <- broadCastResponse{Peer: p, Err: err}
 				return
@@ -236,29 +248,9 @@ func (r *replica) Broadcast(fn func(c *Client) (interface{}, error)) <-chan broa
 }
 
 func (r *replica) sendRequest(ch chan<- *chans.Request, timeout time.Duration, val interface{}) (interface{}, error) {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	req := chans.NewRequest(val)
-	defer req.Cancel()
-
-	select {
-	case <-r.ctrl.Closed():
-		return nil, errors.WithStack(errs.ClosedError)
-	case <-timer.C:
-		return nil, errors.Wrapf(errs.TimeoutError, "Request timed out waiting for machine to accept [%v]", timeout)
-	case ch <- req:
-		select {
-		case <-r.ctrl.Closed():
-			return nil, errors.WithStack(errs.ClosedError)
-		case r := <-req.Acked():
-			return r, nil
-		case e := <-req.Failed():
-			return nil, errors.Wrap(e, "Request failed")
-		case <-timer.C:
-			return nil, errors.Wrapf(errs.TimeoutError, "Request timed out waiting for machine to response [%v]", timeout)
-		}
-	}
+	timer := context.NewTimer(r.ctrl, timeout)
+	defer timer.Close()
+	return chans.SendRequest(r.ctrl, ch, timer.Closed(), val)
 }
 
 func (r *replica) Listen(start int64, buf int64) (Listener, error) {
@@ -269,7 +261,7 @@ func (r *replica) Compact(cancel <-chan struct{}, until int64, data <-chan Event
 	return r.Log.Compact(cancel, until, data, Config{r.Cluster()})
 }
 
-func (r *replica) Append(req AppendEventRequest) (ret Entry, err error) {
+func (r *replica) Append(req AppendRequest) (ret Entry, err error) {
 	val, err := r.sendRequest(r.AppendRequests, r.Options.ReadTimeout, req)
 	if err != nil {
 		return
@@ -339,7 +331,7 @@ func getOrCreateLog(ctx context.Context, store LogStorage, self Peer) (ret *log,
 	}
 
 	if raw == nil {
-		raw, err = store.NewLog(self.Id, Config{[]Peer{self}})
+		raw, err = store.NewLog(self.Id, Config{NewPeers([]Peer{self})})
 		if err != nil {
 			err = errors.Wrapf(err, "Error opening stored log [%v]", self.Id)
 			return

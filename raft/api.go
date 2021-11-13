@@ -436,7 +436,7 @@ type ServerSession interface {
 	//  * RosterUpdateRequest
 	//  * ReplicateRequest
 	//  * VoteRequest
-	//  * AppendEventRequest
+	//  * AppendRequest
 	//  * InstallSnapshotRequest
 	//
 	Read(time.Duration) (interface{}, error)
@@ -450,7 +450,7 @@ type ServerSession interface {
 	//  * RosterUpdateResponse
 	//  * ReplicateResponse
 	//  * VoteResponse
-	//  * AppendEventResponse
+	//  * AppendResponse
 	//  * InstallSnapshotResponse
 	//
 	Send(interface{}, time.Duration) error
@@ -467,7 +467,7 @@ type ClientSession interface {
 	//  * RosterUpdateRequest
 	//  * ReplicateRequest
 	//  * VoteRequest
-	//  * AppendEventRequest
+	//  * AppendRequest
 	//  * InstallSnapshotRequest
 	//
 	Send(interface{}, time.Duration) error
@@ -479,7 +479,7 @@ type ClientSession interface {
 	//  * *RosterUpdateResponse
 	//  * *ReplicateResponse
 	//  * *VoteResponse
-	//  * *AppendEventResponse
+	//  * *AppendResponse
 	//  * *InstallSnapshotResponse
 	//
 	Read(interface{}, time.Duration) error
@@ -533,12 +533,12 @@ type VoteResponse struct {
 	Granted bool  `json:"granted"`
 }
 
-type AppendEventRequest struct {
+type AppendRequest struct {
 	Event []byte `json:"event"`
 	Kind  Kind   `json:"kind"`
 }
 
-type AppendEventResponse struct {
+type AppendResponse struct {
 	Index int64 `json:"index"`
 	Term  int64 `json:"term"`
 }

@@ -20,16 +20,15 @@ var (
 	snapshotEventsPrefix = bin.String("snapshots.events")
 )
 
-// Store impl.
-type BadgerStore struct {
+type BadgerStorage struct {
 	db *badger.DB
 }
 
 func NewBadgerLogStorage(db *badger.DB) LogStorage {
-	return &BadgerStore{db}
+	return &BadgerStorage{db}
 }
 
-func (s *BadgerStore) GetLog(id uuid.UUID) (DurableLog, error) {
+func (s *BadgerStorage) GetLog(id uuid.UUID) (DurableLog, error) {
 	log, err := badgerOpenLog(s.db, id)
 	if err != nil || log == nil {
 		return nil, err
@@ -37,15 +36,15 @@ func (s *BadgerStore) GetLog(id uuid.UUID) (DurableLog, error) {
 	return log, nil
 }
 
-func (s *BadgerStore) NewLog(id uuid.UUID, config Config) (DurableLog, error) {
+func (s *BadgerStorage) NewLog(id uuid.UUID, config Config) (DurableLog, error) {
 	return badgerCreateLog(s.db, id, config)
 }
 
-func (s *BadgerStore) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret DurableSnapshot, err error) {
+func (s *BadgerStorage) InstallSnapshot(snapshotId uuid.UUID, lastIndex int64, lastTerm int64, size int64, conf Config) (ret DurableSnapshot, err error) {
 	return badgerInstallSnapshot(s.db, snapshotId, lastIndex, lastTerm, size, conf)
 }
 
-func (s *BadgerStore) InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error {
+func (s *BadgerStorage) InstallSnapshotSegment(snapshotId uuid.UUID, offset int64, batch []Event) error {
 	return s.db.Update(func(tx *badger.Txn) error {
 		return badgerPutSnapshotEvents(tx, snapshotId, offset, batch)
 	})
@@ -100,7 +99,7 @@ func (b *BadgerLog) Id() uuid.UUID {
 }
 
 func (b *BadgerLog) Store() LogStorage {
-	return &BadgerStore{b.db}
+	return &BadgerStorage{b.db}
 }
 
 func (b *BadgerLog) Min() (m int64, e error) {
@@ -161,11 +160,15 @@ func (b *BadgerLog) Get(index int64) (i Entry, o bool, e error) {
 	return
 }
 
-func (b *BadgerLog) Insert(batch []Entry) error {
-	err := b.db.Update(func(tx *badger.Txn) error {
-		return badgerPutLogEntries(tx, b.Id(), batch)
-	})
-	return err
+func (b *BadgerLog) Insert(batch []Entry) (err error) {
+	for {
+		err = b.db.Update(func(tx *badger.Txn) error {
+			return badgerPutLogEntries(tx, b.Id(), batch)
+		})
+		if err == nil || err != badger.ErrConflict {
+			return
+		}
+	}
 }
 
 func (b *BadgerLog) SnapshotId() (i uuid.UUID, e error) {

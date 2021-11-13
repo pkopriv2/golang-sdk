@@ -22,14 +22,14 @@ type server struct {
 }
 
 func newServer(ctx context.Context, self *replica, socket Socket, opts Options) (ret *server) {
-	ctx = ctx.Sub("Server")
+	ctx = ctx.Sub("Server(%v)", self.Self)
 	ret = &server{
 		ctx:    ctx,
 		ctrl:   ctx.Control(),
 		logger: ctx.Logger(),
 		self:   self,
 		opts:   opts,
-		pool:   pool.NewWorkPool(ctx.Control(), opts.Workers),
+		pool:   pool.NewWorkPool(ctx.Control(), opts.MaxWorkers),
 	}
 	ret.start(socket)
 	return
@@ -85,7 +85,7 @@ func (s *server) newWorker(session ServerSession) func() {
 				resp, err = s.self.Replicate(r)
 			case VoteRequest:
 				resp, err = s.self.RequestVote(r)
-			case AppendEventRequest:
+			case AppendRequest:
 				resp, err = s.self.Append(r)
 			case InstallSnapshotRequest:
 				resp, err = s.self.InstallSnapshot(r)
@@ -103,7 +103,6 @@ func (s *server) newWorker(session ServerSession) func() {
 					return
 				}
 			}
-
 		}
 	}
 }

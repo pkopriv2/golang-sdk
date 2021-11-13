@@ -39,7 +39,7 @@ func TestBadgerLog_CreateSnapshot_Config(t *testing.T) {
 	db := badgerdb.MustOpenTemp()
 	defer badgerdb.CloseAndDelete(db)
 
-	expected := Config{Peers: []Peer{Peer{uuid.NewV1(), "addr"}}}
+	expected := Config{Peers: NewPeers([]Peer{Peer{uuid.NewV1(), "addr"}})}
 
 	store := NewBadgerLogStorage(db)
 

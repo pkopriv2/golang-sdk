@@ -14,6 +14,10 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
+var (
+	ErrConnRefused = errors.New("connection refused")
+)
+
 // This implements the leader state machine and all accompanying services.
 // Because this is steady-state machine, it must implement all of the requests
 // types.  There are cases where clients are making requests that only followers
@@ -43,16 +47,15 @@ func becomeLeader(replica *replica) {
 	ctx := replica.Ctx.Sub("Leader(%v)", replica.CurrentTerm())
 	ctx.Logger().Info("Becoming leader")
 
-	workPool := pool.NewWorkPool(ctx.Control(), 20)
-	ctx.Control().Defer(func(error) {
-		workPool.Close()
-	})
-
 	logSyncer := newLogSyncer(ctx, replica)
 	ctx.Control().Defer(func(error) {
-		// We need a last effort attempt at committing any pending logs before we shutdown
+
+		// If the leader is shutting down, it could be because it is leaving the cluster.
+		// We need to do a best effort attempt of propagating any pending commits.
+		// If we do not, the other peers MAY NOT recognize that the leader is gone
+		// and will continue to attempt to connect to it until the config entry is
+		// committed.
 		tryBroadCastHeartbeat(logSyncer.Syncers(), nil)
-		logSyncer.Close()
 	})
 
 	l := &leader{
@@ -60,7 +63,7 @@ func becomeLeader(replica *replica) {
 		logger:   ctx.Logger(),
 		ctrl:     ctx.Control(),
 		syncer:   logSyncer,
-		workPool: workPool,
+		workPool: pool.NewWorkPool(ctx.Control(), replica.Options.MaxWorkers),
 		term:     replica.CurrentTerm(),
 		replica:  replica,
 	}
@@ -69,6 +72,14 @@ func becomeLeader(replica *replica) {
 }
 
 func (l *leader) start() {
+
+	// Establish leadership
+	if !tryBroadCastHeartbeat(l.syncer.Syncers(), l.ctrl.Closed()) {
+		l.ctrl.Close()
+		becomeFollower(l.replica)
+		return
+	}
+
 	// Roster routine
 	go func() {
 		defer l.ctrl.Close()
@@ -86,6 +97,8 @@ func (l *leader) start() {
 	// Main routine
 	go func() {
 		defer l.ctrl.Close()
+		defer func() {
+		}()
 
 		timer := time.NewTimer(l.replica.ElectionTimeout / 5)
 		defer timer.Stop()
@@ -107,7 +120,7 @@ func (l *leader) start() {
 			case req := <-l.replica.BarrierRequests:
 				l.handleReadBarrier(req)
 			case <-timer.C:
-				l.broadcastHeartbeat()
+				tryBroadCastHeartbeat(l.syncer.Syncers(), l.ctrl.Closed())
 			case <-l.syncer.ctrl.Closed():
 				l.logger.Error("Syncer closed: %v", l.syncer.ctrl.Failure())
 				l.ctrl.Close()
@@ -115,24 +128,11 @@ func (l *leader) start() {
 				return
 			}
 
-			l.logger.Debug("Resetting timeout [%v]", l.replica.ElectionTimeout/5)
+			//l.logger.Debug("Resetting timeout [%v]", l.replica.ElectionTimeout/5)
 			timer.Reset(l.replica.ElectionTimeout / 5)
 		}
 	}()
 
-	// Establish leadership
-	if !l.broadcastHeartbeat() {
-		l.ctrl.Close()
-		becomeFollower(l.replica)
-		return
-	}
-
-	// Establish read barrier
-	if _, err := l.replica.Append(AppendEventRequest{Event{}, NoOp}); err != nil {
-		l.ctrl.Close()
-		becomeFollower(l.replica)
-		return
-	}
 }
 
 // leaders do not accept snapshot installations
@@ -170,7 +170,7 @@ func (c *leader) handleReadBarrier(req *chans.Request) {
 
 func (c *leader) handleAppend(req *chans.Request) {
 	err := c.workPool.SubmitOrCancel(req.Canceled(), func() {
-		req.Return(c.syncer.Append(req.Canceled(), req.Body().(AppendEventRequest)))
+		req.Return(c.syncer.Append(req.Canceled(), req.Body().(AppendRequest)))
 	})
 	if err != nil {
 		req.Fail(errors.Wrapf(err, "Error submitting work to append pool."))
@@ -190,7 +190,10 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 			return
 		}
 
-		_, err = c.replica.Append(AppendEventRequest{bytes, Conf})
+		if _, err = c.replica.Append(AppendRequest{bytes, Conf}); err != nil {
+			c.logger.Error("Error removing peer: %v", err)
+		}
+
 		req.Fail(err)
 		return
 	}
@@ -244,13 +247,12 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		return
 	}
 
-	_, err = c.replica.Append(AppendEventRequest{bytes, Conf})
+	_, err = c.replica.Append(AppendRequest{bytes, Conf})
 	req.Fail(err)
 }
 
 func (c *leader) handleRequestVote(req *chans.Request) {
 	vote := req.Body().(VoteRequest)
-
 	c.logger.Debug("Handling request vote [term=%v,peer=%v]", vote.Term, vote.Id.String()[:8])
 
 	// previous or current term vote.  (immediately decline.  already leader)
@@ -286,47 +288,6 @@ func (c *leader) handleRequestVote(req *chans.Request) {
 
 	c.ctrl.Close()
 	becomeFollower(c.replica)
-}
-
-func (c *leader) broadcastHeartbeat() bool {
-	syncers := c.syncer.Syncers()
-	ch := make(chan ReplicateResponse, len(syncers))
-	for _, p := range syncers {
-		go func(p *peerSyncer) {
-			resp, err := p.Heartbeat(c.ctrl.Closed())
-			if err != nil {
-				ch <- ReplicateResponse{Term: c.term.Epoch, Success: false}
-			} else {
-				ch <- resp
-			}
-		}(p)
-	}
-
-	timer := time.NewTimer(c.replica.ElectionTimeout)
-	defer timer.Stop()
-	for i := 0; i < c.replica.Majority()-1; {
-		select {
-		case <-c.ctrl.Closed():
-			return false
-		case resp := <-ch:
-			if resp.Term > c.term.Epoch {
-				c.replica.SetTerm(resp.Term, nil, nil)
-				c.ctrl.Close()
-				becomeFollower(c.replica)
-				return false
-			}
-
-			i++
-		case <-timer.C:
-			c.logger.Error("Unable to retrieve enough heartbeat responses.")
-			c.replica.SetTerm(c.term.Epoch, nil, c.term.VotedFor)
-			c.ctrl.Close()
-			becomeFollower(c.replica)
-			return false
-		}
-	}
-
-	return true
 }
 
 // the log syncer should be rebuilt every time a leader comes to power.
@@ -380,15 +341,19 @@ func (s *logSyncer) spawnSyncer(p Peer) *peerSyncer {
 		select {
 		case <-sync.ctrl.Closed():
 			if errs.Is(sync.ctrl.Failure(), ErrNotLeader) {
-				s.logger.Info("No longer leader. Shutting down")
 				s.ctrl.Fail(ErrNotLeader)
 				return
+			}
+
+			sleep := 500 * time.Millisecond
+			if errs.Is(sync.ctrl.Failure(), ErrConnRefused) {
+				sleep = 30 * time.Second
 			}
 
 			select {
 			case <-s.ctrl.Closed():
 				return
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(sleep):
 			}
 
 			s.logger.Info("Syncer [%v] closed: %v", p, sync.ctrl.Failure())
@@ -401,7 +366,7 @@ func (s *logSyncer) spawnSyncer(p Peer) *peerSyncer {
 	return sync
 }
 
-func (s *logSyncer) handleRosterChange(peers []Peer) {
+func (s *logSyncer) handleRosterChange(peers Peers) {
 	cur, active := s.Syncers(), make(map[uuid.UUID]*peerSyncer)
 
 	// Add any missing
@@ -439,12 +404,13 @@ func (s *logSyncer) start() {
 			if s.ctrl.IsClosed() || !ok {
 				return
 			}
+			s.logger.Info("Detected roster change: %v", peers.Flatten())
 			s.handleRosterChange(peers)
 		}
 	}()
 }
 
-func (s *logSyncer) Append(cancel <-chan struct{}, req AppendEventRequest) (entry Entry, err error) {
+func (s *logSyncer) Append(cancel <-chan struct{}, req AppendRequest) (entry Entry, err error) {
 	entry, err = s.self.Log.Append(req.Event, s.term.Epoch, req.Kind)
 	if err != nil {
 		s.ctrl.Fail(err)
@@ -452,25 +418,29 @@ func (s *logSyncer) Append(cancel <-chan struct{}, req AppendEventRequest) (entr
 	}
 
 	// wait for majority to append as well
-	for done := make(map[uuid.UUID]struct{}); len(done) < s.self.Majority()-1; {
+	for done := make(map[uuid.UUID]struct{}); ; {
+		cluster := s.self.Cluster()
+		if len(done) >= majority(len(cluster))-1 {
+			break
+		}
 
-		for _, p := range s.self.Others() {
+		for _, p := range cluster {
 			if _, ok := done[p.Id]; ok {
 				continue
 			}
 
-			syncer, ok := s.GetSyncer(p.Id)
+			sync, ok := s.GetSyncer(p.Id)
 			if !ok {
 				continue
 			}
 
-			index, term := syncer.GetPrevIndexAndTerm()
-			if index >= entry.Index && term >= s.term.Epoch {
-				done[p.Id] = struct{}{}
+			index, term := sync.GetPrevIndexAndTerm()
+			if index >= entry.Index && term >= entry.Term {
+				done[sync.peer.Id] = struct{}{}
 			}
 		}
 
-		timer := time.NewTimer(1 * time.Millisecond)
+		timer := time.NewTimer(10 * time.Microsecond)
 		select {
 		case <-s.ctrl.Closed():
 			timer.Stop()
@@ -485,6 +455,7 @@ func (s *logSyncer) Append(cancel <-chan struct{}, req AppendEventRequest) (entr
 		}
 	}
 
+	s.logger.Debug("Committing index: %v", entry.Index)
 	s.self.Log.Commit(entry.Index) // commutative, so safe in the event of out of order commits.
 	return
 }
@@ -522,16 +493,12 @@ type peerSyncer struct {
 	prevIndex int64
 	prevTerm  int64
 	prevLock  sync.RWMutex
-	pool      pool.ObjectPool // T: Client
+	pool      pool.ObjectPool // T: *Client
 }
 
 func newPeerSyncer(ctx context.Context, self *replica, term Term, peer Peer) *peerSyncer {
 	sub := ctx.Sub("Sync(%v)", peer)
 
-	pool := peer.ClientPool(sub.Control(), self.Options)
-	sub.Control().Defer(func(error) {
-		pool.Close()
-	})
 	sync := &peerSyncer{
 		logger:    sub.Logger(),
 		ctrl:      sub.Control(),
@@ -540,7 +507,7 @@ func newPeerSyncer(ctx context.Context, self *replica, term Term, peer Peer) *pe
 		term:      term,
 		prevIndex: -1,
 		prevTerm:  -1,
-		pool:      pool,
+		pool:      peer.ClientPool(sub.Control(), self.Options), // TODO: reuse replica's pool
 	}
 	sync.start()
 	return sync
@@ -613,36 +580,40 @@ func (s *peerSyncer) start() {
 					return
 				}
 
-				// might have to reinitialize client after each batch.
 				s.logger.Debug("Position [%v/%v]", prev.Index, next)
-				err := s.Send(s.ctrl.Closed(), func(cl *Client) error {
-					prev, ok, err = s.sendBatch(cl, prev, next)
-					if err != nil {
-						return errors.Wrapf(err, "Error sending batch [start=%v,end=%v]", prev.Index, next)
-					}
 
-					if ok {
-						s.setPrevIndexAndTerm(prev.Index, prev.Term)
-						return nil
-					}
-
-					s.logger.Debug("Too far behind [index=%v]. Installing snapshot.", prev.Index)
-
-					prev, err = s.sendSnapshotToClient(cl)
-					if err != nil {
-						return errors.Wrap(err, "Error sending snapshot")
-					}
-
-					s.setPrevIndexAndTerm(prev.Index, prev.Term)
-					return nil
-				})
+				cl, err := s.pool.TakeOrCancel(s.ctrl.Closed())
 				if err != nil {
 					s.ctrl.Fail(err)
 					return
 				}
+
+				prev, ok, err = s.sendBatch(cl.(*Client), prev, next)
+				if err != nil {
+					s.pool.Fail(cl)
+					s.ctrl.Fail(err)
+					return
+				}
+
+				if ok {
+					s.pool.Return(cl)
+					s.logger.Debug("Synced to [%v]", prev.Index)
+					s.setPrevIndexAndTerm(prev.Index, prev.Term)
+					continue
+				}
+
+				s.logger.Debug("Too far behind [index=%v]. Installing snapshot.", prev.Index)
+				prev, err = s.sendSnapshotToClient(cl.(*Client))
+				if err != nil {
+					s.pool.Fail(cl)
+					s.ctrl.Fail(err)
+					return
+				}
+
+				s.pool.Return(cl)
+				s.setPrevIndexAndTerm(prev.Index, prev.Term)
 			}
 
-			s.logger.Debug("Synced to [%v]", prev.Index)
 		}
 	}()
 }
@@ -723,48 +694,52 @@ func (s *peerSyncer) getLatestLocalEntry() (Entry, error) {
 }
 
 // Sends a batch up to the horizon
-func (s *peerSyncer) sendBatch(cl *Client, prev Entry, horizon int64) (Entry, bool, error) {
-	// scan a full batch of events.
+func (s *peerSyncer) sendBatch(cl *Client, prev Entry, horizon int64) (ret Entry, ok bool, err error) {
 	batch, err := s.self.Log.Scan(prev.Index+1, min(horizon+1, prev.Index+1+256))
-	if err != nil || len(batch) == 0 {
-		return prev, false, err
+	if err != nil {
+		return
+	}
+	if len(batch) == 0 { // shouldn't be possible
+		ret, ok = prev, true
+		return
 	}
 
 	s.logger.Debug("Sending batch [offset=%v, num=%v]", batch[0].Index, len(batch))
 
-	// send the append request.
 	resp, err := cl.Replicate(newReplication(s.self.Self.Id, s.term.Epoch, prev.Index, prev.Term, batch, s.self.Log.Committed()))
 	if err != nil {
-		return prev, false, errors.Wrapf(err, "Error replicating batch [prev=%v,num=%v]", prev.Index, len(batch))
+		err = errors.Wrapf(err, "Error replicating batch [prev=%v,num=%v]", prev.Index, len(batch))
+		return
 	}
 
 	// make sure we're still a leader.
 	if resp.Term > s.term.Epoch {
-		return prev, false, ErrNotLeader
+		err = ErrNotLeader
+		return
 	}
 
 	// if it was successful, progress the peer's index and term
 	if resp.Success {
-		return batch[len(batch)-1], true, nil
+		ret, ok = batch[len(batch)-1], true
+		return
 	}
 
 	s.logger.Info("Consistency check failed. Received hint [%v]", resp.Hint)
-	prev, ok, err := s.self.Log.Get(min(resp.Hint, prev.Index-1))
-	return prev, ok, err
+	return s.self.Log.Get(min(resp.Hint, prev.Index-1))
 }
 
-func (s *peerSyncer) sendSnapshotToClient(cl *Client) (Entry, error) {
+func (s *peerSyncer) sendSnapshotToClient(cl *Client) (ret Entry, err error) {
 	snapshot, err := s.self.Log.Snapshot()
 	if err != nil {
-		return Entry{}, err
+		return
 	}
 
-	err = s.sendSnapshot(cl, snapshot)
-	if err != nil {
-		return Entry{}, err
+	if err = s.sendSnapshot(cl, snapshot); err != nil {
+		return
 	}
 
-	return Entry{Index: snapshot.LastIndex(), Term: snapshot.LastTerm()}, nil
+	ret = Entry{Index: snapshot.LastIndex(), Term: snapshot.LastTerm()}
+	return
 }
 
 // sends the snapshot to the client
@@ -836,13 +811,13 @@ func tryBroadCastHeartbeat(syncers map[uuid.UUID]*peerSyncer, cancel <-chan stru
 		}(p)
 	}
 
-	for i := 0; i < majority(len(syncers))-1; {
+	for i := 0; i < len(syncers); i++ {
 		select {
 		case <-cancel:
 			return
 		case <-ch:
-			i++
 		}
 	}
+
 	return true
 }

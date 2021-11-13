@@ -59,8 +59,8 @@ func (t *BadgerPeerStorage) GetActiveTerm(id uuid.UUID) (term Term, ok bool, err
 			if err == badger.ErrKeyNotFound {
 				err = nil
 			}
+			return
 		}
-		return
 
 		bytes, err := item.ValueCopy(nil)
 		if err != nil {

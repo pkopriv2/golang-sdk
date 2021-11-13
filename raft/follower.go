@@ -79,7 +79,6 @@ func (c *follower) start() {
 				return
 			}
 
-			c.logger.Debug("Resetting election timeout: %v", c.replica.ElectionTimeout)
 			timer.Reset(c.replica.ElectionTimeout)
 		}
 	}()
@@ -146,22 +145,22 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 		return
 	}
 
-	// If the replica isn't recognized, deny the vote. Immediately become candidate
+	// If the replica isn't recognized, deny the vote and become follower.  Newer term detected
 	_, ok := c.replica.FindPeer(vote.Id)
 	if !ok {
 		req.Ack(VoteResponse{Term: vote.Term, Granted: false})
-		c.replica.SetTerm(vote.Term, nil, nil)
 		c.ctrl.Close()
-		becomeCandidate(c.replica)
+		c.replica.SetTerm(vote.Term, nil, nil)
+		becomeFollower(c.replica)
 		return
 	}
 
 	if vote.Term == c.term.Epoch {
 		if c.term.VotedFor == nil && vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
-			c.logger.Debug("Voting for candidate [%v]", vote.Id)
+			c.logger.Debug("Voting for candidate [%v]", vote.Id.String()[:8])
 			req.Ack(VoteResponse{Term: vote.Term, Granted: true})
-			c.replica.SetTerm(vote.Term, nil, &vote.Id) // correct?
 			c.ctrl.Close()
+			c.replica.SetTerm(vote.Term, nil, &vote.Id) // correct?
 			becomeFollower(c.replica)
 			return
 		}
@@ -175,7 +174,7 @@ func (c *follower) handleRequestVote(req *chans.Request) {
 
 	// handle: future term vote.  (move to new term.  only accept if candidate log is long enough)
 	if vote.MaxLogIndex >= maxIndex && vote.MaxLogTerm >= maxTerm {
-		c.logger.Debug("Voting for candidate [%v]", vote.Id)
+		c.logger.Debug("Voting for candidate [%v]", vote.Id.String()[:8])
 		req.Ack(VoteResponse{Term: vote.Term, Granted: true})
 		c.replica.SetTerm(vote.Term, nil, &vote.Id)
 		c.ctrl.Close()
@@ -198,7 +197,6 @@ func (c *follower) handleReplication(req *chans.Request) {
 	}
 
 	c.logger.Debug("Handling replication [prevIndex=%v, prevTerm=%v]", repl.PrevLogIndex, repl.PrevLogTerm)
-
 	if repl.Term > c.term.Epoch || c.term.LeaderId == nil {
 		c.logger.Info("New leader detected [%v]", repl.LeaderId.String()[:8])
 

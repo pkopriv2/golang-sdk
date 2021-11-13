@@ -61,7 +61,7 @@ func (c *Client) Replicate(req ReplicateRequest) (ret ReplicateResponse, err err
 	return
 }
 
-func (c *Client) Append(req AppendEventRequest) (ret AppendEventResponse, err error) {
+func (c *Client) Append(req AppendRequest) (ret AppendResponse, err error) {
 	err = errs.Or(
 		c.conn.Send(req, c.opts.SendTimeout),
 		c.conn.Read(&ret, c.opts.ReadTimeout))
