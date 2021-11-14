@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -55,20 +56,18 @@ func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 }
 
 func StopTestCluster(cluster []Host) error {
-	//errs := []error{}
+	errs := []error{}
 	for _, h := range cluster {
 		if err := h.Close(); err != nil {
-			return err
-			//errs = append(errs, err)
+			errs = append(errs, err)
 		}
 	}
-	return nil
 
-	//if len(errs) == 0 {
-	//return nil
-	//}
+	if len(errs) == 0 {
+		return nil
+	}
 
-	//return fmt.Errorf("Errors stopping cluster: %v", errs)
+	return fmt.Errorf("Errors stopping cluster: %v", errs)
 }
 
 func ElectLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {

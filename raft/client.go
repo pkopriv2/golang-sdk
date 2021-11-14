@@ -1,17 +1,14 @@
 package raft
 
-import (
-	"github.com/pkopriv2/golang-sdk/lang/errs"
-)
-
-// This is the primary client implementation.  It uses the host's underlying
-// transport to connect and send requests to remote hosts - which means that
-// this is a concrete type
+// This is the high-level client implementation that is used internally.
+// It uses the host's underlying transport to connect and send requests
+// to remote hosts.
 type Client struct {
 	conn ClientSession
 	opts Timeouts
 }
 
+// Dial the address on the given transport.  Returns a high-level client
 func Dial(t Transport, addr string, o Timeouts) (ret *Client, err error) {
 	conn, err := t.Dial(addr, o.DialTimeout)
 	if err != nil {
@@ -26,51 +23,44 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+func (c *Client) Send(req interface{}, respPtr interface{}) error {
+	if err := c.conn.SendRequest(req, c.opts.SendTimeout); err != nil {
+		return err
+	}
+	return c.conn.ReadResponse(respPtr, c.opts.ReadTimeout)
+}
+
 func (c *Client) Barrier() (ret ReadBarrierResponse, err error) {
-	err = errs.Or(
-		c.conn.SendRequest(ReadBarrierRequest{}, c.opts.SendTimeout),
-		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
+	err = c.Send(ReadBarrierRequest{}, &ret)
 	return
 }
 
 func (c *Client) Status() (ret StatusResponse, err error) {
-	err = errs.Or(
-		c.conn.SendRequest(StatusRequest{}, c.opts.SendTimeout),
-		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
+	err = c.Send(StatusRequest{}, &ret)
 	return
 }
 
 func (c *Client) RequestVote(req VoteRequest) (ret VoteResponse, err error) {
-	err = errs.Or(
-		c.conn.SendRequest(req, c.opts.SendTimeout),
-		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
+	err = c.Send(req, &ret)
 	return
 }
 
 func (c *Client) UpdateRoster(req RosterUpdateRequest) error {
 	var resp RosterUpdateResponse
-	return errs.Or(
-		c.conn.SendRequest(req, c.opts.SendTimeout),
-		c.conn.ReadResponse(&resp, c.opts.ReadTimeout))
+	return c.Send(req, &resp)
 }
 
 func (c *Client) Replicate(req ReplicateRequest) (ret ReplicateResponse, err error) {
-	err = errs.Or(
-		c.conn.SendRequest(req, c.opts.SendTimeout),
-		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
+	err = c.Send(req, &ret)
 	return
 }
 
 func (c *Client) Append(req AppendRequest) (ret AppendResponse, err error) {
-	err = errs.Or(
-		c.conn.SendRequest(req, c.opts.SendTimeout),
-		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
+	err = c.Send(req, &ret)
 	return
 }
 
 func (c *Client) InstallSnapshotSegment(req InstallSnapshotRequest) (ret InstallSnapshotResponse, err error) {
-	err = errs.Or(
-		c.conn.SendRequest(req, c.opts.SendTimeout),
-		c.conn.ReadResponse(&ret, c.opts.ReadTimeout))
+	err = c.Send(req, &ret)
 	return
 }
