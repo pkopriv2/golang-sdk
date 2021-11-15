@@ -146,7 +146,7 @@ func (r *replica) start() error {
 }
 
 func (r *replica) NewRootContext() context.Context {
-	return context.NewContext(r.Ctx.Logger().Out(), r.Ctx.Logger().Level())
+	return context.NewContextWithLogger(r.Ctx.Logger())
 }
 
 func (r *replica) String() string {

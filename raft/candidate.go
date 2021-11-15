@@ -28,7 +28,7 @@ func becomeCandidate(replica *replica) {
 	// We need a new root context so we don't leak defers on the replica's context.
 	// Basically, anything that is part of the leader's lifecycle needs to be its
 	// own isolated object hierarchy.
-	ctx := replica.NewRootContext().Sub("Peer(%v): Candidate(%v)", replica.Self, replica.CurrentTerm())
+	ctx := replica.NewRootContext().Sub("%v: Candidate(%v)", replica.Self, replica.CurrentTerm())
 	ctx.Logger().Info("Becoming candidate")
 
 	l := &candidate{
@@ -186,8 +186,8 @@ func (c *candidate) handleRequestVote(req *chans.Request) {
 	c.logger.Debug("Rejecting candidate vote [%v]", vote.Id.String())
 	c.replica.SetTerm(vote.Term, nil, nil)
 	c.ctrl.Close()
-	becomeFollower(c.replica)
 	req.Ack(VoteResponse{Term: vote.Term, Granted: false})
+	becomeFollower(c.replica)
 }
 
 func (c *candidate) handleReplication(req *chans.Request) {
@@ -212,6 +212,6 @@ func (c *candidate) handleReplication(req *chans.Request) {
 	c.logger.Info("Detected new leader [%v]", repl.LeaderId.String()[:8])
 	c.replica.SetTerm(repl.Term, &repl.LeaderId, &repl.LeaderId)
 	c.ctrl.Close()
-	becomeFollower(c.replica)
 	req.Ack(ReplicateResponse{Term: repl.Term, Success: false, Hint: max})
+	becomeFollower(c.replica)
 }

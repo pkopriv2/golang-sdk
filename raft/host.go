@@ -9,6 +9,7 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/badgerdb"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkopriv2/golang-sdk/lang/net"
 	"github.com/pkopriv2/golang-sdk/lang/pool"
 	uuid "github.com/satori/go.uuid"
@@ -89,7 +90,7 @@ func newHost(ctx context.Context, addr string, opts Options) (h *host, err error
 		select {
 		case <-ctx.Control().Closed():
 		case <-replica.ctrl.Closed():
-			ctx.Close()
+			ctx.Control().Fail(replica.ctrl.Failure())
 		}
 	}()
 
@@ -166,27 +167,38 @@ func (h *host) leave() error {
 func (h *host) tryJoin(addrs []string) error {
 	logger := h.replica.logger
 
-	errs := []error{}
-	for i := 0; i < 5; i++ {
+	wait := func() error {
+		timer := time.NewTimer(h.replica.Options.ElectionTimeout)
+		defer timer.Stop()
+		select {
+		case <-h.ctrl.Closed():
+			return ErrClosed
+		case <-timer.C:
+			return nil
+		}
+	}
+
+	failures := []error{}
+	for i := 0; i < 10; i++ {
 		for j := 0; j < len(addrs); j++ {
+			logger.Info("Attempt [%v] to join [%v]: (errs=%v)", (i+1)*(j+1)+j, addrs[j], failures)
+
 			cl, err := Dial(h.replica.Options.Transport, addrs[j], h.replica.Options.Timeouts())
 			if err != nil {
-				logger.Info("Unable to dial client [%v]: %v", addrs[j], err)
-				errs = append(errs, err)
+				failures = append(failures, err)
 				continue
 			}
 
 			status, err := cl.Status()
 			if err != nil {
-				logger.Info("Unable to get status [%v]: %v", addrs[j], err)
 				cl.Close()
-				errs = append(errs, err)
+				failures = append(failures, err)
 				continue
 			}
 
+			// This is a race condition!!
 			h.replica.Roster.Set(status.Config.Peers)
 			if status.Config.Peers.Contains(h.replica.Self) {
-				logger.Info("Already a member")
 				cl.Close()
 				return nil
 			}
@@ -195,20 +207,23 @@ func (h *host) tryJoin(addrs []string) error {
 			if status.Term.LeaderId == nil {
 				cl.Close()
 
-				timer := time.After(h.replica.Options.ElectionTimeout)
-				select {
-				case <-h.ctrl.Closed():
-					return ErrClosed
-				case <-timer:
+				if e := wait(); e != nil {
+					return e
 				}
 
-				errs = append(errs, errors.Wrapf(ErrNoLeader, "No leader according to [%v]", status.Self))
+				failures = append(failures, errors.Wrapf(ErrNoLeader, "No leader according to [%v]", status.Self))
 				continue
 			}
 
 			leader, ok := status.Config.Peers[*status.Term.LeaderId]
 			if !ok {
-				errs = append(errs, errors.Wrapf(ErrNoLeader, "Could not locate leader [%v]", status.Term.LeaderId))
+				cl.Close()
+
+				if e := wait(); e != nil {
+					return e
+				}
+
+				failures = append(failures, errors.Wrapf(ErrNoLeader, "Could not locate leader [%v]", status.Term.LeaderId))
 				continue
 			}
 
@@ -217,14 +232,21 @@ func (h *host) tryJoin(addrs []string) error {
 
 				cl, err = leader.Dial(h.replica.Options)
 				if err != nil {
-					errs = append(errs, errors.Wrapf(err, "Error dialing leader [%v]", leader))
+					failures = append(failures, errors.Wrapf(err, "Error dialing leader [%v]", leader))
 					continue
 				}
 			}
 
 			if err = cl.UpdateRoster(RosterUpdateRequest{h.replica.Self, true}); err != nil {
 				cl.Close()
-				errs = append(errs, errors.Wrapf(err, "Error joining cluster [%v]", leader))
+
+				if errs.Is(err, ErrNotLeader) {
+					if e := wait(); e != nil {
+						return e
+					}
+				}
+
+				failures = append(failures, errors.Wrapf(err, "Error joining cluster [%v]", leader))
 				continue
 			}
 
@@ -232,7 +254,7 @@ func (h *host) tryJoin(addrs []string) error {
 		}
 	}
 
-	return fmt.Errorf("Unable to join cluster: %v", errs)
+	return fmt.Errorf("Unable to join cluster: %v", failures)
 }
 
 func (h *host) tryLeave(cancel <-chan struct{}) (err error) {

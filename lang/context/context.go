@@ -20,8 +20,12 @@ type ctx struct {
 	control Control
 }
 
+func NewContextWithLogger(log Logger) Context {
+	return &ctx{logger: log, control: NewControl(nil)}
+}
+
 func NewContext(out io.Writer, lvl LogLevel) Context {
-	return &ctx{logger: NewLogger(out, lvl, ""), control: NewControl(nil)}
+	return NewContextWithLogger(NewLogger(out, lvl, ""))
 }
 
 func NewDefaultContext() Context {
@@ -46,13 +50,16 @@ func (c *ctx) Sub(fmt string, args ...interface{}) Context {
 
 // FIXME: return the sub control in order to be able to cancel/cleanup
 func NewTimer(ctrl Control, dur time.Duration) Control {
-	sub := ctrl.Sub()
+	sub := NewRootControl()
 
 	timer := time.NewTimer(dur)
 	go func() {
 		defer sub.Close()
+		defer timer.Stop()
 
 		select {
+		case <-ctrl.Closed():
+			return
 		case <-sub.Closed():
 			return
 		case <-timer.C:

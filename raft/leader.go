@@ -47,7 +47,7 @@ func becomeLeader(replica *replica) {
 	// We need a new root context so we don't leak defers on the replica's context.
 	// Basically, anything that is part of the leader's lifecycle needs to be its
 	// own isolated object hierarchy.
-	ctx := replica.NewRootContext().Sub("Peer(%v): Leader(%v)", replica.Self, replica.CurrentTerm())
+	ctx := replica.NewRootContext().Sub("Leader(%v)", replica.CurrentTerm())
 	ctx.Logger().Info("Becoming leader")
 
 	logSyncer := newLogSyncer(ctx, replica)
@@ -216,6 +216,7 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 	}
 	defer func() {
 		if err != nil {
+			c.logger.Error("Unable to add peer [%v]: %v", update.Peer, err)
 			sync.Close() // this really isn't necessary, but shouldn't hurt
 		}
 	}()
@@ -226,16 +227,16 @@ func (c *leader) handleRosterUpdate(req *chans.Request) {
 		return
 	}
 
-	score, err := sync.Score(req.Canceled())
-	if err != nil {
-		req.Fail(err)
-		return
-	}
+	//score, err := sync.Score(req.Canceled())
+	//if err != nil {
+	//req.Fail(err)
+	//return
+	//}
 
-	if score < 0 {
-		req.Fail(errors.Wrapf(ErrTooSlow, "Unable to merge peer: %v", update.Peer))
-		return
-	}
+	//if score < 0 {
+	//req.Fail(errors.Wrapf(ErrTooSlow, "Unable to merge peer: %v", update.Peer))
+	//return
+	//}
 
 	bytes, err := Config{all}.encode(enc.Json)
 	if err != nil {

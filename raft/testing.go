@@ -11,18 +11,18 @@ import (
 
 func StartTestHost(ctx context.Context) (Host, error) {
 	return Start(ctx, ":0",
-		WithDialTimeout(1*time.Second),
-		WithReadTimeout(1*time.Second),
-		WithSendTimeout(1*time.Second),
-		WithElectionTimeout(100*time.Millisecond))
+		WithDialTimeout(5*time.Second),
+		WithReadTimeout(5*time.Second),
+		WithSendTimeout(5*time.Second),
+		WithElectionTimeout(1000*time.Millisecond))
 }
 
 func JoinTestHost(ctx context.Context, peer string) (Host, error) {
 	return Join(ctx, ":0", []string{peer},
-		WithDialTimeout(1*time.Second),
-		WithReadTimeout(1*time.Second),
-		WithSendTimeout(1*time.Second),
-		WithElectionTimeout(100*time.Millisecond))
+		WithDialTimeout(5*time.Second),
+		WithReadTimeout(5*time.Second),
+		WithSendTimeout(5*time.Second),
+		WithElectionTimeout(1000*time.Millisecond))
 }
 
 func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
@@ -55,10 +55,25 @@ func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 	return hosts, nil
 }
 
-func StopTestCluster(cluster []Host) error {
+func CloseTestCluster(cluster []Host) error {
 	errs := []error{}
 	for _, h := range cluster {
 		if err := h.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("Errors stopping cluster: %v", errs)
+}
+
+func KillTestCluster(cluster []Host) error {
+	errs := []error{}
+	for _, h := range cluster {
+		if err := h.Kill(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -87,7 +102,7 @@ func ElectLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {
 		return leader != nil && copyTerm.LeaderId == leader && copyTerm.Epoch == term
 	})
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 
 	if leader == nil {
