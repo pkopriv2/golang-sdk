@@ -2,8 +2,6 @@ package server
 
 import (
 	"time"
-
-	"github.com/pkopriv2/golang-sdk/lang/env"
 )
 
 func buildMiddleware(fns ...Middleware) Middleware {
@@ -17,7 +15,7 @@ func buildMiddleware(fns ...Middleware) Middleware {
 }
 
 func recoveryHandler(h Handler) Handler {
-	return func(e env.Environment, req Request) (resp Response) {
+	return func(e Environment, req Request) (resp Response) {
 		defer func() {
 			if msg := recover(); msg != nil {
 				e.Logger().Error("Handler panic [%v %v]: [%+v]", req.Method(), req.URL(), msg)
@@ -30,7 +28,7 @@ func recoveryHandler(h Handler) Handler {
 }
 
 func TimerMiddleware(h Handler) Handler {
-	return func(e env.Environment, req Request) Response {
+	return func(e Environment, req Request) Response {
 		now := time.Now()
 		defer func() {
 			e.Logger().Info("Request duration [%v]", time.Now().Sub(now))
@@ -40,7 +38,7 @@ func TimerMiddleware(h Handler) Handler {
 }
 
 func RouteMiddleware(h Handler) Handler {
-	return func(e env.Environment, req Request) Response {
+	return func(e Environment, req Request) Response {
 		e.Logger().Info("%v %v", req.Method(), req.URL())
 		return h(e, req)
 	}

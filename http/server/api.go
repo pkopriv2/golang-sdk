@@ -7,8 +7,12 @@ import (
 	"github.com/pkopriv2/golang-sdk/lang/env"
 )
 
+// Each request will inherit an environment.  Contains a dependency
+// injector and a context.
+type Environment env.Environment
+
 // A Handler is a function that handles a request and returns a response
-type Handler func(env.Environment, Request) Response
+type Handler func(Environment, Request) Response
 
 // A Middleware component wraps a handler to produce another handler.  Can
 // be used to inject behavior across a set of handlers.

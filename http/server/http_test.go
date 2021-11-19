@@ -4,10 +4,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/pkopriv2/golang-sdk/http/client"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/pkopriv2/golang-sdk/lang/enc"
-	"github.com/pkopriv2/golang-sdk/lang/env"
-	"github.com/pkopriv2/golang-sdk/http/client"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,10 +15,10 @@ func TestServer_EmptyResponse(t *testing.T) {
 	defer ctx.Close()
 
 	server, err := Serve(ctx, func(s *Service) {
-		s.Register(Get("/test"), func(e env.Environment, r Request) (ret Response) {
+		s.Register(Get("/test"), func(e Environment, r Request) (ret Response) {
 			return StatusOK
 		})
-		s.Register(Get("/test/v2"), func(e env.Environment, r Request) (ret Response) {
+		s.Register(Get("/test/v2"), func(e Environment, r Request) (ret Response) {
 			return StatusPanic
 		})
 	})
@@ -43,7 +42,7 @@ func TestServer_NonEmptyResponse(t *testing.T) {
 	}
 
 	server, err := Serve(ctx, func(s *Service) {
-		s.Register(Get("/test"), func(e env.Environment, r Request) (ret Response) {
+		s.Register(Get("/test"), func(e Environment, r Request) (ret Response) {
 			return Ok(enc.Json, Return{1})
 		})
 	})
