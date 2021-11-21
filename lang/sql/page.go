@@ -1,13 +1,13 @@
 package sql
 
 import (
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 )
 
 var (
-	ErrNone     = errors.New("Sql:None")
-	ErrNotEmpty = errors.New("Sql:NotEmpty")
+	ErrNone     = errors.New("Sql:ErrNone")
+	ErrNotEmpty = errors.New("Sql:ErrNotEmpty")
 )
 
 type PageOption func(*Page)
@@ -90,9 +90,9 @@ func IfNone(cond Query, then, els Atomic) Atomic {
 
 func ExpectOne(query Query) Atomic {
 	return func(tx Tx) (err error) {
-		num, err := tx.Exec(query)
-		if num != 1 {
-			err = errs.Or(err, errors.Wrapf(ErrNone, "Expected one result. Got [%v]", num))
+		ok, err := tx.Query(Nil(), query)
+		if !ok {
+			err = errs.Or(err, errors.Wrapf(ErrNone, "Did not receive a result"))
 		}
 		return
 	}

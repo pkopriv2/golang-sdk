@@ -7,10 +7,10 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/pkopriv2/golang-sdk/lang/context"
-	"github.com/pkopriv2/golang-sdk/lang/errs"
 	"github.com/lib/pq"
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/context"
+	"github.com/pkopriv2/golang-sdk/lang/errs"
 	uuid "github.com/satori/go.uuid"
 )
 
