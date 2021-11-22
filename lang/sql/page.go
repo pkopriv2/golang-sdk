@@ -132,7 +132,7 @@ func QueryPage(query SelectBuilder, dest Buffer, page ...PageOption) Atomic {
 	}
 }
 
-func QueryScan(query Query, dest Buffer) Atomic {
+func Scan(query Query, dest Buffer) Atomic {
 	return func(tx Tx) (err error) {
 		_, err = tx.Scan(dest, query)
 		return
