@@ -112,7 +112,7 @@ func (h *host) Kill() error {
 }
 
 func (h *host) Close() error {
-	h.ctrl.Fail(h.leave())
+	h.ctrl.Close()
 	return h.ctrl.Failure()
 }
 
@@ -146,6 +146,12 @@ func (h *host) Sync() (Sync, error) {
 
 func (h *host) Log() (Log, error) {
 	return newLogClient(h.ctx, h.replica, h.leaderPool), nil
+}
+
+func (h *host) Leave() error {
+	err := h.tryLeave(nil)
+	h.replica.ctrl.Fail(err)
+	return err
 }
 
 func (h *host) start() error {
@@ -255,12 +261,6 @@ func (h *host) join(addrs []string) (err error) {
 	}
 
 	return fmt.Errorf("Unable to join cluster: %v", failures)
-}
-
-func (h *host) leave() error {
-	err := h.tryLeave(nil)
-	h.replica.ctrl.Fail(err)
-	return err
 }
 
 func (h *host) tryJoin(addrs []string) error {

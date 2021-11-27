@@ -58,7 +58,7 @@ func StartTestCluster(ctx context.Context, size int) (peers []Host, err error) {
 func CloseTestCluster(cluster []Host) error {
 	errs := []error{}
 	for _, h := range cluster {
-		if err := h.Close(); err != nil {
+		if err := h.Leave(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -73,7 +73,7 @@ func CloseTestCluster(cluster []Host) error {
 func KillTestCluster(cluster []Host) error {
 	errs := []error{}
 	for _, h := range cluster {
-		if err := h.Kill(); err != nil {
+		if err := h.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -109,7 +109,7 @@ func ElectLeader(cancel <-chan struct{}, cluster []Host) (Host, error) {
 		return nil, nil
 	}
 
-	return first(cluster, func(h Host) bool {
+	return FirstHost(cluster, func(h Host) bool {
 		return h.Self().Id == *leader
 	}), nil
 }
@@ -181,7 +181,7 @@ func SyncTo(index int64) func(p Host) bool {
 	}
 }
 
-func first(cluster []Host, fn func(h Host) bool) Host {
+func FirstHost(cluster []Host, fn func(h Host) bool) Host {
 	for _, h := range cluster {
 		if fn(h) {
 			return h

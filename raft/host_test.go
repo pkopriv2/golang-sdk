@@ -9,6 +9,8 @@ import (
 
 	_ "net/http/pprof"
 
+	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/bin"
 	"github.com/pkopriv2/golang-sdk/lang/concurrent"
 	"github.com/pkopriv2/golang-sdk/lang/context"
 	"github.com/stretchr/testify/assert"
@@ -115,6 +117,8 @@ func TestHost_Cluster_ConvergeManyPeers(t *testing.T) {
 		return
 	}
 
+	defer KillTestCluster(cluster)
+
 	timer := context.NewTimer(ctx.Control(), 10*time.Second)
 	defer timer.Close()
 
@@ -152,7 +156,7 @@ func TestHost_Cluster_LeaderLeave(t *testing.T) {
 	if !assert.Nil(t, err) {
 		return
 	}
-	if !assert.Nil(t, leader1.Close()) { // leaves the cluster
+	if !assert.Nil(t, leader1.Leave()) { // leaves the cluster
 		return
 	}
 
@@ -198,7 +202,7 @@ func TestHost_Cluster_LeaderFailed(t *testing.T) {
 		return
 	}
 
-	assert.Nil(t, leader1.Kill())
+	assert.Nil(t, leader1.Close())
 
 	time.Sleep(1 * time.Second)
 
@@ -239,12 +243,65 @@ func TestHost_Cluster_Append(t *testing.T) {
 	var last Entry
 	for i := 0; i < numItems; i++ {
 		before := time.Now()
-		last, err = log.Append(timer.Closed(), []byte(fmt.Sprintf("%v", i)))
+		last, err = log.Append(timer.Closed(), bin.Int64(int64(i)))
 		if err != nil {
 			t.FailNow()
 			return
 		}
-		fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v", string(last.Payload), time.Now().Sub(before)))
+		fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v", i, time.Now().Sub(before)))
+	}
+
+	// make sure the logs get to all hosts eventually
+	done := make(chan error, len(cluster)-1)
+	for _, h := range cluster {
+		go func(h Host) {
+			log, err := h.Log()
+			if err != nil {
+				done <- err
+				return
+			}
+
+			listener, err := log.Listen(0, int64(numItems))
+			if err != nil {
+				done <- err
+				return
+			}
+
+			for i := 0; i < numItems; {
+				select {
+				case <-timer.Closed():
+					done <- err
+					return
+				case entry := <-listener.Data():
+					if entry.Kind != Std {
+						continue
+					}
+
+					if !assert.Equal(t, []byte(bin.Int64(int64(i))), []byte(entry.Payload)) {
+						done <- errors.New("assertion failed")
+						return
+					}
+
+					fmt.Println(fmt.Sprintf("Verified [%v]", i))
+					i++
+				}
+			}
+
+			done <- nil
+			return
+		}(h)
+	}
+
+	for i := 0; i < len(cluster)-1; i++ {
+		select {
+		case err := <-done:
+			if !assert.Nil(t, err) {
+				return
+			}
+		case <-timer.Closed():
+			assert.Fail(t, "Timer closed")
+			return
+		}
 	}
 
 	assert.Nil(t, SyncAll(timer.Closed(), cluster, SyncTo(last.Index)))

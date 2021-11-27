@@ -169,9 +169,8 @@ func Join(ctx context.Context, addr string, peers []string, o ...Option) (Host, 
 type Host interface {
 	io.Closer
 
-	// Forcibly shuts down the host. It is still included in cluster configuration and
-	// will be included in future elections once it resumes.
-	Kill() error
+	// Leaves the cluster and shuts down.
+	Leave() error
 
 	// Returns the peer representing this host
 	Self() Peer
