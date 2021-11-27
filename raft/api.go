@@ -313,7 +313,7 @@ func (c Config) encode(enc enc.Encoder) (ret []byte, err error) {
 	return
 }
 
-// A term represents a host state in the Raft epochal time model.
+// A term represents a host state in the Raft time model.
 type Term struct {
 	Epoch    int64      `json:"epoch"`     // the current term number (increases monotonically across the cluster)
 	LeaderId *uuid.UUID `json:"leader_id"` // the current leader (as seen by this member)

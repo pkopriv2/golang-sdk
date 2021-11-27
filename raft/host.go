@@ -154,8 +154,107 @@ func (h *host) start() error {
 }
 
 func (h *host) join(addrs []string) (err error) {
-	becomeFollower(h.replica)
-	return h.tryJoin(addrs)
+	logger := h.replica.logger
+
+	wait := func() error {
+		timer := time.NewTimer(h.replica.Options.ElectionTimeout)
+		defer timer.Stop()
+		select {
+		case <-h.ctrl.Closed():
+			return ErrClosed
+		case <-timer.C:
+			return nil
+		}
+	}
+
+	failures, started := []error{}, false
+	for i := 0; i < 10; i++ {
+		for j := 0; j < len(addrs); j++ {
+			logger.Info("Attempt [%v] to join [%v]: (errs=%v)", (i+1)*(j+1)+j, addrs[j], failures)
+
+			cl, err := Dial(h.replica.Options.Transport, addrs[j], h.replica.Options.Timeouts())
+			if err != nil {
+				failures = append(failures, err)
+				continue
+			}
+
+			status, err := cl.Status()
+			if err != nil {
+				cl.Close() // already in failure. No great mechanism for suppressed exception
+				failures = append(failures, err)
+				continue
+			}
+
+			// This is a race condition!!  We can set the roster and then
+			// receive a roster update that removes us from the cluster.
+			// Not sure yet what to do about this.
+			h.replica.Roster.Set(status.Config.Peers)
+			if status.Config.Peers.Contains(h.replica.Self) {
+				cl.Close()
+				return nil
+			}
+
+			h.replica.Roster.Set(status.Config.Peers.Add(h.replica.Self))
+			if status.Term.LeaderId == nil {
+				cl.Close()
+
+				if e := wait(); e != nil {
+					return e
+				}
+
+				failures = append(failures, errors.Wrapf(ErrNoLeader, "No leader according to [%v]", status.Self))
+				continue
+			}
+
+			leader, ok := status.Config.Peers[*status.Term.LeaderId]
+			if !ok {
+				cl.Close()
+
+				if e := wait(); e != nil {
+					return e
+				}
+
+				failures = append(failures, errors.Wrapf(ErrNoLeader, "Could not locate leader [%v]", status.Term.LeaderId))
+				continue
+			}
+
+			if status.Self.Id != leader.Id {
+				cl.Close()
+
+				cl, err = leader.Dial(h.replica.Options)
+				if err != nil {
+					failures = append(failures, errors.Wrapf(err, "Error dialing leader [%v]", leader))
+					continue
+				}
+			}
+
+			if !started {
+				becomeFollower(h.replica)
+			}
+
+			if err = cl.UpdateRoster(RosterUpdateRequest{h.replica.Self, true}); err != nil {
+				cl.Close()
+
+				if errs.Is(err, ErrNotLeader) {
+					if e := wait(); e != nil {
+						return e
+					}
+				}
+
+				failures = append(failures, errors.Wrapf(err, "Error joining cluster [%v]", leader))
+				continue
+			}
+
+			if err := cl.Close(); err != nil {
+				failures = append(failures, errors.Wrapf(err, "Error closing client"))
+				continue
+			}
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("Unable to join cluster: %v", failures)
 }
 
 func (h *host) leave() error {
