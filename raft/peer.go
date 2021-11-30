@@ -90,3 +90,7 @@ func (peers Peers) Equals(o Peers) bool {
 	}
 	return true
 }
+
+func (peers Peers) String() string {
+	return fmt.Sprintf("%v", peers.Flatten())
+}

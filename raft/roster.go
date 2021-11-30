@@ -62,10 +62,11 @@ func listenRosterChanges(r *replica) {
 func (r *rosterManager) start() {
 	peers, maxIdx, err := r.reloadLatestConfig()
 	if err != nil {
-		r.self.ctrl.Fail(err)
+		r.self.ctrl.Fail(errors.Wrap(err, "Unable to load config"))
 		return
 	}
 
+	r.logger.Info("Setting roster: %v", peers)
 	r.self.Roster.Set(peers)
 	go func() {
 		ctrl := r.self.ctrl.Sub()
@@ -139,6 +140,10 @@ func (r *rosterManager) reloadLatestConfig() (ret Peers, maxIdx int64, err error
 	minIdx := snapshot.LastIndex()
 	if maxIdx <= minIdx {
 		return
+	}
+
+	if minIdx < 0 {
+		minIdx = 0
 	}
 
 	// Start reading the log backwards until we find an entry

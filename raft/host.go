@@ -162,6 +162,21 @@ func (h *host) start() error {
 func (h *host) join(addrs []string) (err error) {
 	logger := h.replica.logger
 
+	// The join logic is pretty straightforward.  Essentially,  try to
+	// connect to the cluster, obtain its configuration, start following
+	// then update the leader with the new member configuration.  The
+	// leader should start syncing logs and the follower replicating them.
+	// This method does not attempt to update configuration out of band.
+	// That is the sole responsibility of the roster manager.
+	//
+	// CAUTION: There is some danger in certain failure modes.  If this
+	// host fails to join, its own configuration will NOT include the rest
+	// of the cluster. If it maintains this state long enough, it could,
+	// in theory, elect itself leader of its own independent cluster.
+	// This only seems to be a problem for very young clusters.  As clusters
+	// age, their term numbers naturally go up, which means that as soon as
+	// the leader of those clusters do become aware of this host, it will
+	// naturally force them to be followers.
 	wait := func() error {
 		timer := time.NewTimer(h.replica.Options.ElectionTimeout)
 		defer timer.Stop()
@@ -191,16 +206,17 @@ func (h *host) join(addrs []string) (err error) {
 				continue
 			}
 
-			// This is a race condition!!  We can set the roster and then
-			// receive a roster update that removes us from the cluster.
-			// Not sure yet what to do about this.
-			h.replica.Roster.Set(status.Config.Peers)
+			// If we're already in the cluster, just go ahead and return.
 			if status.Config.Peers.Contains(h.replica.Self) {
+				logger.Info("Already a member of the cluster")
+				if !started {
+					becomeFollower(h.replica)
+				}
+
 				cl.Close()
 				return nil
 			}
 
-			h.replica.Roster.Set(status.Config.Peers.Add(h.replica.Self))
 			if status.Term.LeaderId == nil {
 				cl.Close()
 
@@ -257,99 +273,6 @@ func (h *host) join(addrs []string) (err error) {
 			}
 
 			return nil
-		}
-	}
-
-	return fmt.Errorf("Unable to join cluster: %v", failures)
-}
-
-func (h *host) tryJoin(addrs []string) error {
-	logger := h.replica.logger
-
-	wait := func() error {
-		timer := time.NewTimer(h.replica.Options.ElectionTimeout)
-		defer timer.Stop()
-		select {
-		case <-h.ctrl.Closed():
-			return ErrClosed
-		case <-timer.C:
-			return nil
-		}
-	}
-
-	failures := []error{}
-	for i := 0; i < 10; i++ {
-		for j := 0; j < len(addrs); j++ {
-			logger.Info("Attempt [%v] to join [%v]: (errs=%v)", (i+1)*(j+1)+j, addrs[j], failures)
-
-			cl, err := Dial(h.replica.Options.Transport, addrs[j], h.replica.Options.Timeouts())
-			if err != nil {
-				failures = append(failures, err)
-				continue
-			}
-
-			status, err := cl.Status()
-			if err != nil {
-				cl.Close()
-				failures = append(failures, err)
-				continue
-			}
-
-			// This is a race condition!!
-			h.replica.Roster.Set(status.Config.Peers)
-			if status.Config.Peers.Contains(h.replica.Self) {
-				cl.Close()
-				return nil
-			}
-
-			h.replica.Roster.Set(status.Config.Peers.Add(h.replica.Self))
-			if status.Term.LeaderId == nil {
-				cl.Close()
-
-				if e := wait(); e != nil {
-					return e
-				}
-
-				failures = append(failures, errors.Wrapf(ErrNoLeader, "No leader according to [%v]", status.Self))
-				continue
-			}
-
-			leader, ok := status.Config.Peers[*status.Term.LeaderId]
-			if !ok {
-				cl.Close()
-
-				if e := wait(); e != nil {
-					return e
-				}
-
-				failures = append(failures, errors.Wrapf(ErrNoLeader, "Could not locate leader [%v]", status.Term.LeaderId))
-				continue
-			}
-
-			if status.Self.Id != leader.Id {
-				cl.Close()
-
-				cl, err = leader.Dial(h.replica.Options)
-				if err != nil {
-					failures = append(failures, errors.Wrapf(err, "Error dialing leader [%v]", leader))
-					continue
-				}
-			}
-
-			if err = cl.UpdateRoster(RosterUpdateRequest{h.replica.Self, true}); err != nil {
-				cl.Close()
-
-				if errs.Is(err, ErrNotLeader) {
-					if e := wait(); e != nil {
-						return e
-					}
-				}
-
-				failures = append(failures, errors.Wrapf(err, "Error joining cluster [%v]", leader))
-				continue
-			}
-
-			return cl.Close()
 		}
 	}
 

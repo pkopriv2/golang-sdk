@@ -10,6 +10,7 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/pkg/errors"
+	"github.com/pkopriv2/golang-sdk/lang/badgerdb"
 	"github.com/pkopriv2/golang-sdk/lang/bin"
 	"github.com/pkopriv2/golang-sdk/lang/concurrent"
 	"github.com/pkopriv2/golang-sdk/lang/context"
@@ -426,6 +427,88 @@ func TestHost_Cluster_Join_Busy(t *testing.T) {
 			assert.Nil(t, SyncAll(timer.Closed(), cluster, SyncTo(entry.Index)))
 		}
 	}
+}
+
+func TestHost_Cluster_ReJoin(t *testing.T) {
+	ctx := context.NewContext(os.Stdout, LogLevel)
+	defer ctx.Close()
+
+	timer := context.NewTimer(ctx.Control(), 30*time.Second)
+
+	cluster, err := StartTestCluster(ctx, 3)
+	if !assert.Nil(t, err) {
+		return
+	}
+	defer KillTestCluster(cluster)
+
+	leader, err := ElectLeader(timer.Closed(), cluster)
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	db, err := badgerdb.OpenTemp()
+	if !assert.Nil(t, err) {
+		return
+	}
+	ctx.Control().Defer(func(error) {
+		badgerdb.CloseAndDelete(db)
+	})
+
+	var opts []Option
+	opts = append(opts,
+		WithLogStorage(NewBadgerLogStorage(db)),
+		WithPeerStorage(NewBadgerPeerStorage(db)),
+		WithDialTimeout(5*time.Second),
+		WithReadTimeout(5*time.Second),
+		WithSendTimeout(5*time.Second),
+		WithElectionTimeout(1000*time.Millisecond))
+
+	host, err := Join(ctx, ":0", []string{leader.Self().Addr}, opts...)
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	log, err := leader.Log()
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	numItems := 111
+
+	var last Entry
+	for i := 0; i < numItems; i++ {
+		before := time.Now()
+
+		last, err = log.Append(timer.Closed(), bin.Int64(int64(i)))
+		if !assert.Nil(t, err) {
+			return
+		}
+		fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v", i, time.Now().Sub(before)))
+	}
+
+	if !assert.Nil(t, SyncAll(timer.Closed(), append([]Host{host}, cluster...), SyncTo(last.Index))) {
+		return
+	}
+	if !assert.Nil(t, host.Close()) {
+		return
+	}
+
+	host, err = Join(ctx, host.Self().Addr, []string{leader.Self().Addr}, opts...)
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	for i := numItems; i < numItems*2; i++ {
+		before := time.Now()
+
+		last, err = log.Append(timer.Closed(), bin.Int64(int64(i)))
+		if !assert.Nil(t, err) {
+			return
+		}
+		fmt.Println(fmt.Sprintf("Wrote [%v]. Duration: %v", i, time.Now().Sub(before)))
+	}
+
+	assert.Nil(t, SyncAll(timer.Closed(), append([]Host{host}, cluster...), SyncTo(last.Index)))
 }
 
 func toPeers(hosts []Host) (ret Peers) {

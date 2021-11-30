@@ -343,9 +343,9 @@ func (s *logSyncer) spawnSyncer(p Peer) *peerSyncer {
 			}
 
 			sleep := 500 * time.Millisecond
-			if errs.Is(sync.ctrl.Failure(), ErrConnRefused) {
-				sleep = 30 * time.Second
-			}
+			//if errs.Is(sync.ctrl.Failure(), ErrConnRefused) {
+			//sleep = 30 * time.Second
+			//}
 
 			s.logger.Info("Syncer [%v] closed: %v", p, sync.ctrl.Failure())
 			select {

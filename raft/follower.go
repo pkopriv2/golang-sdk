@@ -26,7 +26,7 @@ func becomeFollower(replica *replica) {
 	// We need a new root context so we don't leak defers on the replica's context.
 	// Basically, anything that is part of the leader's lifecycle needs to be its
 	// own isolated object hierarchy.
-	ctx := replica.NewRootContext().Sub("%v: Follower(%v)", replica.Self, replica.CurrentTerm())
+	ctx := replica.NewRootContext().Sub("Follower(%v)", replica.CurrentTerm())
 	ctx.Logger().Info("Becoming follower")
 
 	l := &follower{
@@ -63,6 +63,7 @@ func (c *follower) start() {
 	// Main routine
 	go func() {
 		defer c.ctrl.Close()
+		defer c.logger.Info("Shutting down")
 
 		timer := time.NewTimer(c.replica.ElectionTimeout)
 		defer timer.Stop()
